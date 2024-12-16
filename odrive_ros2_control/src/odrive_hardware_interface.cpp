@@ -138,6 +138,17 @@ CallbackReturn ODriveHardwareInterface::on_activate(const State&) {
 
     // This can be called several seconds before the controller finishes starting.
     // Therefore we enable the ODrives only in perform_command_mode_switch().
+    
+    for (auto& axis : axes_) {
+        Clear_Errors_msg_t msg1;
+        msg1.Identify = 0;
+        axis.send(msg1);
+
+        Set_Axis_State_msg_t msg2;
+        msg2.Axis_Requested_State = AXIS_STATE_CLOSED_LOOP_CONTROL;
+        axis.send(msg2);
+    }
+    
     return CallbackReturn::SUCCESS;
 }
 
