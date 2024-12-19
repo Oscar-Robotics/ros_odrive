@@ -78,7 +78,7 @@ struct Axis {
     // double motor_temperature_ = NAN;
     // double bus_voltage_ = NAN;
     // double bus_current_ = NAN;
-    bool rotation_inversed = false;
+    double direction_multiplier = 1.0;
 
     // Indicates which controller inputs are enabled. This is configured by the
     // controller that sits on top of this hardware interface. Multiple inputs
@@ -133,9 +133,9 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
             const auto& rotation_param = rotation_param_it->second;
 
             if (rotation_param == "true" || rotation_param == "True") {
-                axis.rotation_inversed = true;
+                axis.direction_multiplier = -1.0;
             } else if (rotation_param == "false" || rotation_param == "False") {
-                axis.rotation_inversed = false;
+                axis.direction_multiplier = 1.0;
             } else {
                 RCLCPP_ERROR(
                     rclcpp::get_logger("ODriveHardwareInterface"),
@@ -147,7 +147,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
             }
         } else {
             // Default value if inverse_rotation is not specified
-            axis.rotation_inversed = false;
+            axis.direction_multiplier = 1.0;
         }
     }
 
@@ -327,7 +327,7 @@ return_type ODriveHardwareInterface::write(const rclcpp::Time&, const rclcpp::Du
             axis.send(msg);
         } else if (axis.vel_input_enabled_) {
             Set_Input_Vel_msg_t msg;
-            msg.Input_Vel = axis.vel_setpoint_ / (2 * M_PI);
+            msg.Input_Vel = axis.vel_setpoint_ / (2 * M_PI) * axis.direction_multiplier;
             msg.Input_Torque_FF = axis.torque_input_enabled_ ? axis.torque_setpoint_ : 0.0f;
             axis.send(msg);
         } else if (axis.torque_input_enabled_) {
