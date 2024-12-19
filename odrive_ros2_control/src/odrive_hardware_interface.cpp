@@ -78,6 +78,7 @@ struct Axis {
     // double motor_temperature_ = NAN;
     // double bus_voltage_ = NAN;
     // double bus_current_ = NAN;
+    bool rotation_inversed = false;
 
     // Indicates which controller inputs are enabled. This is configured by the
     // controller that sits on top of this hardware interface. Multiple inputs
@@ -114,7 +115,40 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
     can_intf_name_ = info_.hardware_parameters["can"];
 
     for (auto& joint : info_.joints) {
-        axes_.emplace_back(&can_intf_, std::stoi(joint.parameters.at("node_id")));
+        try {
+            axes_.emplace_back(&can_intf_, std::stoi(joint.parameters.at("node_id")));
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(
+                rclcpp::get_logger("ODriveHardwareInterface"),
+                "Invalid or missing 'node_id' parameter for joint %s: %s",
+                joint.name.c_str(),
+                e.what()
+            );
+            return CallbackReturn::ERROR;
+        }
+
+        auto& axis = axes_.back();
+        auto rotation_param_it = joint.parameters.find("inverse_rotation");
+        if (rotation_param_it != joint.parameters.end()) {
+            const auto& rotation_param = rotation_param_it->second;
+
+            if (rotation_param == "true" || rotation_param == "True") {
+                axis.rotation_inversed = true;
+            } else if (rotation_param == "false" || rotation_param == "False") {
+                axis.rotation_inversed = false;
+            } else {
+                RCLCPP_ERROR(
+                    rclcpp::get_logger("ODriveHardwareInterface"),
+                    "Invalid 'inverse_rotation' parameter for joint '%s': %s. Expected 'true' or 'false'.",
+                    joint.name.c_str(),
+                    rotation_param.c_str()
+                );
+                return CallbackReturn::ERROR;
+            }
+        } else {
+            // Default value if inverse_rotation is not specified
+            axis.rotation_inversed = false;
+        }
     }
 
     return CallbackReturn::SUCCESS;
@@ -232,8 +266,7 @@ return_type ODriveHardwareInterface::perform_command_mode_switch(
         std::array<std::pair<std::string, bool*>, 3> interfaces = {
             {{info_.joints[i].name + "/" + hardware_interface::HW_IF_POSITION, &axis.pos_input_enabled_},
              {info_.joints[i].name + "/" + hardware_interface::HW_IF_VELOCITY, &axis.vel_input_enabled_},
-             {info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT, &axis.torque_input_enabled_}}
-        };
+             {info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT, &axis.torque_input_enabled_}}};
 
         bool mode_switch = false;
 
