@@ -79,6 +79,7 @@ struct Axis {
     // double motor_temperature_ = NAN;
     // double bus_voltage_ = NAN;
     // double bus_current_ = NAN;
+    double direction_multiplier = 1.0;
 
     // Indicates which controller inputs are enabled. This is configured by the
     // controller that sits on top of this hardware interface. Multiple inputs
@@ -115,7 +116,40 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
     can_intf_name_ = info_.hardware_parameters["can"];
 
     for (auto& joint : info_.joints) {
-        axes_.emplace_back(&can_intf_, std::stoi(joint.parameters.at("node_id")));
+        try {
+            axes_.emplace_back(&can_intf_, std::stoi(joint.parameters.at("node_id")));
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(
+                rclcpp::get_logger("ODriveHardwareInterface"),
+                "Invalid or missing 'node_id' parameter for joint %s: %s",
+                joint.name.c_str(),
+                e.what()
+            );
+            return CallbackReturn::ERROR;
+        }
+
+        auto& axis = axes_.back();
+
+        auto rotation_param_it = joint.parameters.find("inverse_rotation");
+        if (rotation_param_it != joint.parameters.end()) {
+            const auto& rotation_param = rotation_param_it->second;
+            if (rotation_param == "true" || rotation_param == "True") {
+                axis.direction_multiplier = -1.0;
+            } else if (rotation_param == "false" || rotation_param == "False") {
+                axis.direction_multiplier = 1.0;
+            } else {
+                RCLCPP_ERROR(
+                    rclcpp::get_logger("ODriveHardwareInterface"),
+                    "Invalid 'inverse_rotation' parameter for joint '%s': %s. Expected 'true' or 'false'.",
+                    joint.name.c_str(),
+                    rotation_param.c_str()
+                );
+                return CallbackReturn::ERROR;
+            }
+        } else {
+            // Default value if inverse_rotation is not specified
+            axis.direction_multiplier = 1.0;
+        }
     }
 
     return CallbackReturn::SUCCESS;
@@ -266,14 +300,15 @@ return_type ODriveHardwareInterface::write(const rclcpp::Time&, const rclcpp::Du
         // Send the CAN message that fits the set of enabled setpoints
         if (axis.pos_input_enabled_) {
             Set_Input_Pos_msg_t msg;
-            msg.Input_Pos = axis.pos_setpoint_ / (2 * M_PI);
-            msg.Vel_FF = axis.vel_input_enabled_ ? (axis.vel_setpoint_ / (2 * M_PI)) : 0.0f;
-            msg.Torque_FF = axis.torque_input_enabled_ ? axis.torque_setpoint_ : 0.0f;
+            msg.Input_Pos = axis.direction_multiplier * axis.pos_setpoint_ / (2 * M_PI);
+            msg.Vel_FF = axis.vel_input_enabled_ ? (axis.direction_multiplier * axis.vel_setpoint_ / (2 * M_PI)) : 0.0f;
+            msg.Torque_FF = axis.torque_input_enabled_ ? (axis.direction_multiplier * axis.torque_setpoint_) : 0.0f;
             axis.send(msg);
         } else if (axis.vel_input_enabled_) {
             Set_Input_Vel_msg_t msg;
-            msg.Input_Vel = axis.vel_setpoint_ / (2 * M_PI);
-            msg.Input_Torque_FF = axis.torque_input_enabled_ ? axis.torque_setpoint_ : 0.0f;
+            msg.Input_Vel = axis.direction_multiplier * axis.vel_setpoint_ / (2 * M_PI);
+            msg.Input_Torque_FF = axis.torque_input_enabled_ ? (axis.direction_multiplier * axis.torque_setpoint_)
+                                                             : 0.0f;
             axis.send(msg);
         } else if (axis.torque_input_enabled_) {
             Set_Input_Torque_msg_t msg;
@@ -348,14 +383,14 @@ void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame) {
     switch (cmd) {
         case Get_Encoder_Estimates_msg_t::cmd_id: {
             if (Get_Encoder_Estimates_msg_t msg; try_decode(msg)) {
-                pos_estimate_ = msg.Pos_Estimate * (2 * M_PI);
-                vel_estimate_ = msg.Vel_Estimate * (2 * M_PI);
+                pos_estimate_ = msg.Pos_Estimate * (2 * M_PI) * direction_multiplier;
+                vel_estimate_ = msg.Vel_Estimate * (2 * M_PI) * direction_multiplier;
             }
         } break;
         case Get_Torques_msg_t::cmd_id: {
             if (Get_Torques_msg_t msg; try_decode(msg)) {
-                torque_target_ = msg.Torque_Target;
-                torque_estimate_ = msg.Torque_Estimate;
+                torque_target_ = msg.Torque_Target * direction_multiplier;
+                torque_estimate_ = msg.Torque_Estimate * direction_multiplier;
             }
         } break;
             // silently ignore unimplemented command IDs
