@@ -4,6 +4,8 @@
 #include "hardware_interface/system_interface.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "odrive_enums.h"
+#include "osc_interfaces/msg/odrive_motor_state.hpp"
+#include "osc_utils/hw_publisher.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "socket_can.hpp"
@@ -44,6 +46,7 @@ private:
     std::string can_intf_name_;
     SocketCanIntf can_intf_;
     rclcpp::Time timestamp_;
+    std::shared_ptr<HwPublisher<osc_interfaces::msg::OdriveMotorState>> pub_;
 };
 
 struct Axis {
@@ -77,8 +80,8 @@ struct Axis {
     // uint32_t disarm_reason_ = 0;
     // double fet_temperature_ = NAN;
     // double motor_temperature_ = NAN;
-    // double bus_voltage_ = NAN;
-    // double bus_current_ = NAN;
+    double bus_voltage_ = NAN;
+    double bus_current_ = NAN;
     double direction_multiplier = 1.0;
 
     // Indicates which controller inputs are enabled. This is configured by the
@@ -151,7 +154,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
             axis.direction_multiplier = 1.0;
         }
     }
-
+    pub_ = std::make_shared<HwPublisher<osc_interfaces::msg::OdriveMotorState>>("odrv_pub_node", "odrv_publisher");
     return CallbackReturn::SUCCESS;
 }
 
@@ -291,7 +294,13 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
     while (can_intf_.read_nonblocking()) {
         // repeat until CAN interface has no more messages
     }
-
+    osc_interfaces::msg::OdriveMotorState msg;
+    for (auto& axis : axes_) {
+        msg.vbus_voltage = axis.bus_voltage_;
+        msg.ibus = axis.bus_current_;
+        msg.torque_estimate = axis.torque_estimate_;
+    }
+    pub_->publishData(msg);
     return return_type::OK;
 }
 
@@ -391,6 +400,12 @@ void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame) {
             if (Get_Torques_msg_t msg; try_decode(msg)) {
                 torque_target_ = msg.Torque_Target * direction_multiplier;
                 torque_estimate_ = msg.Torque_Estimate * direction_multiplier;
+            }
+        } break;
+        case Get_Bus_Voltage_Current_msg_t::cmd_id: {
+            if (Get_Bus_Voltage_Current_msg_t msg; try_decode(msg)) {
+                bus_voltage_ = msg.Bus_Voltage;
+                bus_current_ = msg.Bus_Current;
             }
         } break;
             // silently ignore unimplemented command IDs
