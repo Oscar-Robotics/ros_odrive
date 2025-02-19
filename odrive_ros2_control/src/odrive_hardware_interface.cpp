@@ -258,7 +258,8 @@ return_type ODriveHardwareInterface::perform_command_mode_switch(
         std::array<std::pair<std::string, bool*>, 3> interfaces = {
             {{info_.joints[i].name + "/" + hardware_interface::HW_IF_POSITION, &axis.pos_input_enabled_},
              {info_.joints[i].name + "/" + hardware_interface::HW_IF_VELOCITY, &axis.vel_input_enabled_},
-             {info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT, &axis.torque_input_enabled_}}};
+             {info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT, &axis.torque_input_enabled_}}
+        };
 
         bool mode_switch = false;
 
@@ -295,11 +296,11 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
         // repeat until CAN interface has no more messages
     }
     osc_interfaces::msg::OdriveMotorState msg;
-    
-    for (int axis_id;axis_id<axes_.size();axis_id++){
-        msg.vbus_voltage[axis_id] = axes_[axis_id].bus_voltage_;
-        msg.ibus[axis_id] = axes_[axis_id].bus_current_;
-        msg.torque_estimate[axis_id] = axes_[axis_id].torque_estimate_;
+
+    for (auto& axis:axes_) {
+        msg.vbus_voltage.push_back(axis.bus_voltage_);
+        msg.ibus.push_back(axis.bus_current_);
+        msg.torque_estimate.push_back(axis.torque_estimate_);
     }
     pub_->publishData(msg);
     return return_type::OK;
