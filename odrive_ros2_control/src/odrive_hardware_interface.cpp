@@ -295,10 +295,11 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
         // repeat until CAN interface has no more messages
     }
     osc_interfaces::msg::OdriveMotorState msg;
-    for (auto& axis : axes_) {
-        msg.vbus_voltage = axis.bus_voltage_;
-        msg.ibus = axis.bus_current_;
-        msg.torque_estimate = axis.torque_estimate_;
+    
+    for (int axis_id;axis_id<axes_.size();axis_id++){
+        msg.vbus_voltage[axis_id] = axes_[axis_id].bus_voltage_;
+        msg.ibus[axis_id] = axes_[axis_id].bus_current_;
+        msg.torque_estimate[axis_id] = axes_[axis_id].torque_estimate_;
     }
     pub_->publishData(msg);
     return return_type::OK;
