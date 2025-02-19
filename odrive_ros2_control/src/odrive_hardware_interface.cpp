@@ -4,7 +4,7 @@
 #include "hardware_interface/system_interface.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "odrive_enums.h"
-#include "osc_interfaces/msg/odrive_motor_state.hpp"
+#include "osc_interfaces/msg/motor_state.hpp"
 #include "osc_utils/hw_publisher.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -46,7 +46,8 @@ private:
     std::string can_intf_name_;
     SocketCanIntf can_intf_;
     rclcpp::Time timestamp_;
-    std::shared_ptr<HwPublisher<osc_interfaces::msg::OdriveMotorState>> pub_;
+    osc_interfaces::msg::MotorState parse_message();
+    std::shared_ptr<HwPublisher<osc_interfaces::msg::MotorState>> pub_;
 };
 
 struct Axis {
@@ -154,7 +155,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
             axis.direction_multiplier = 1.0;
         }
     }
-    pub_ = std::make_shared<HwPublisher<osc_interfaces::msg::OdriveMotorState>>("odrv_pub_node", "odrv_publisher");
+    pub_ = std::make_shared<HwPublisher<osc_interfaces::msg::MotorState>>("odrv_pub_node", "odrv_publisher");
     return CallbackReturn::SUCCESS;
 }
 
@@ -258,8 +259,7 @@ return_type ODriveHardwareInterface::perform_command_mode_switch(
         std::array<std::pair<std::string, bool*>, 3> interfaces = {
             {{info_.joints[i].name + "/" + hardware_interface::HW_IF_POSITION, &axis.pos_input_enabled_},
              {info_.joints[i].name + "/" + hardware_interface::HW_IF_VELOCITY, &axis.vel_input_enabled_},
-             {info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT, &axis.torque_input_enabled_}}
-        };
+             {info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT, &axis.torque_input_enabled_}}};
 
         bool mode_switch = false;
 
@@ -295,13 +295,7 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
     while (can_intf_.read_nonblocking()) {
         // repeat until CAN interface has no more messages
     }
-    osc_interfaces::msg::OdriveMotorState msg;
-
-    for (auto& axis:axes_) {
-        msg.vbus_voltage.push_back(axis.bus_voltage_);
-        msg.ibus.push_back(axis.bus_current_);
-        msg.torque_estimate.push_back(axis.torque_estimate_);
-    }
+    osc_interfaces::msg::MotorState msg = parse_message();
     pub_->publishData(msg);
     return return_type::OK;
 }
@@ -378,7 +372,30 @@ void ODriveHardwareInterface::set_axis_command_mode(const Axis& axis) {
     axis.send(clear_error_msg);
     axis.send(state_msg);
 }
+osc_interfaces::msg::MotorState ODriveHardwareInterface::parse_message() {
+    rclcpp::Clock::SharedPtr clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
+    osc_interfaces::msg::MotorState msg;
+    msg.header.stamp = clock->now();
+    msg.motor_type = osc_interfaces::msg::MotorState::MOTOR_TYPE_PROP;
+    msg.motor_control_mode = osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_VELOCITY; // A MODIFIER POUR ETRE
+                                                                                           // DYANMIQUE
 
+    for (auto& axis : axes_) {
+        msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_RUNNING
+        ); // A MODIFIER POUR ETRE DYANMIQUE
+        msg.motor_health.push_back(osc_interfaces::msg::MotorState::MOTOR_HEALTH_GOOD
+        ); // A MODIFIER POUR ETRE DYANMIQUE
+        msg.serial_number.push_back("allo"); // A MODIFIER POUR ETRE DYANMIQUE
+        msg.pos_setpoint.push_back(axis.pos_setpoint_);
+        msg.pos_actual.push_back(axis.pos_estimate_);
+        msg.vel_setpoint.push_back(axis.vel_setpoint_);
+        msg.vel_actual.push_back(axis.vel_estimate_);
+        msg.bus_voltage.push_back(axis.bus_voltage_);
+        msg.bus_current.push_back(axis.bus_current_);
+        msg.computed_torque.push_back(axis.torque_estimate_);
+    }
+    return msg;
+}
 void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame) {
     uint8_t cmd = frame.can_id & 0x1f;
 
