@@ -83,7 +83,7 @@ struct Axis {
     double motor_temperature_ = NAN;
     double bus_voltage_ = NAN;
     double bus_current_ = NAN;
-    double direction_multiplier = 1.0;
+    double direction_multiplier_ = 1.0;
 
     double serial_number_ = NAN;
     // Indicates which controller inputs are enabled. This is configured by the
@@ -139,9 +139,9 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         if (rotation_param_it != joint.parameters.end()) {
             const auto& rotation_param = rotation_param_it->second;
             if (rotation_param == "true" || rotation_param == "True") {
-                axis.direction_multiplier = -1.0;
+                axis.direction_multiplier_ = -1.0;
             } else if (rotation_param == "false" || rotation_param == "False") {
-                axis.direction_multiplier = 1.0;
+                axis.direction_multiplier_ = 1.0;
             } else {
                 RCLCPP_ERROR(
                     rclcpp::get_logger("ODriveHardwareInterface"),
@@ -153,7 +153,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
             }
         } else {
             // Default value if inverse_rotation is not specified
-            axis.direction_multiplier = 1.0;
+            axis.direction_multiplier_ = 1.0;
         }
     }
     pub_ = std::make_shared<HwPublisher<osc_interfaces::msg::MotorState>>("odrv_pub_node", "odrv_publisher");
@@ -306,14 +306,15 @@ return_type ODriveHardwareInterface::write(const rclcpp::Time&, const rclcpp::Du
         // Send the CAN message that fits the set of enabled setpoints
         if (axis.pos_input_enabled_) {
             Set_Input_Pos_msg_t msg;
-            msg.Input_Pos = axis.direction_multiplier * axis.pos_setpoint_ / (2 * M_PI);
-            msg.Vel_FF = axis.vel_input_enabled_ ? (axis.direction_multiplier * axis.vel_setpoint_ / (2 * M_PI)) : 0.0f;
-            msg.Torque_FF = axis.torque_input_enabled_ ? (axis.direction_multiplier * axis.torque_setpoint_) : 0.0f;
+            msg.Input_Pos = axis.direction_multiplier_ * axis.pos_setpoint_ / (2 * M_PI);
+            msg.Vel_FF = axis.vel_input_enabled_ ? (axis.direction_multiplier_ * axis.vel_setpoint_ / (2 * M_PI))
+                                                 : 0.0f;
+            msg.Torque_FF = axis.torque_input_enabled_ ? (axis.direction_multiplier_ * axis.torque_setpoint_) : 0.0f;
             axis.send(msg);
         } else if (axis.vel_input_enabled_) {
             Set_Input_Vel_msg_t msg;
-            msg.Input_Vel = axis.direction_multiplier * axis.vel_setpoint_ / (2 * M_PI);
-            msg.Input_Torque_FF = axis.torque_input_enabled_ ? (axis.direction_multiplier * axis.torque_setpoint_)
+            msg.Input_Vel = axis.direction_multiplier_ * axis.vel_setpoint_ / (2 * M_PI);
+            msg.Input_Torque_FF = axis.torque_input_enabled_ ? (axis.direction_multiplier_ * axis.torque_setpoint_)
                                                              : 0.0f;
             axis.send(msg);
         } else if (axis.torque_input_enabled_) {
@@ -413,14 +414,14 @@ void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame) {
     switch (cmd) {
         case Get_Encoder_Estimates_msg_t::cmd_id: {
             if (Get_Encoder_Estimates_msg_t msg; try_decode(msg)) {
-                pos_estimate_ = msg.Pos_Estimate * (2 * M_PI) * direction_multiplier;
-                vel_estimate_ = msg.Vel_Estimate * (2 * M_PI) * direction_multiplier;
+                pos_estimate_ = msg.Pos_Estimate * (2 * M_PI) * direction_multiplier_;
+                vel_estimate_ = msg.Vel_Estimate * (2 * M_PI) * direction_multiplier_;
             }
         } break;
         case Get_Torques_msg_t::cmd_id: {
             if (Get_Torques_msg_t msg; try_decode(msg)) {
-                torque_target_ = msg.Torque_Target * direction_multiplier;
-                torque_estimate_ = msg.Torque_Estimate * direction_multiplier;
+                torque_target_ = msg.Torque_Target * direction_multiplier_;
+                torque_estimate_ = msg.Torque_Estimate * direction_multiplier_;
             }
         } break;
         case Get_Bus_Voltage_Current_msg_t::cmd_id: {
