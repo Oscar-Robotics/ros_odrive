@@ -11,6 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(ament_cmake_auto REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(osc_utils REQUIRED)
+find_package(osc_interfaces REQUIRED)
 ament_auto_find_build_dependencies()
 
 ament_export_dependencies(rosidl_default_runtime std_msgs osc_utils)
