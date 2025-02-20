@@ -46,7 +46,7 @@ private:
     std::string can_intf_name_;
     SocketCanIntf can_intf_;
     rclcpp::Time timestamp_;
-    osc_interfaces::msg::MotorState parse_message();
+    osc_interfaces::msg::MotorState generate_motor_state_message();
     std::shared_ptr<HwPublisher<osc_interfaces::msg::MotorState>> pub_;
 };
 
@@ -80,11 +80,12 @@ struct Axis {
     // uint32_t active_errors_ = 0;
     // uint32_t disarm_reason_ = 0;
     // double fet_temperature_ = NAN;
-    // double motor_temperature_ = NAN;
+    double motor_temperature_ = NAN;
     double bus_voltage_ = NAN;
     double bus_current_ = NAN;
     double direction_multiplier = 1.0;
 
+    double serial_number_ = NAN;
     // Indicates which controller inputs are enabled. This is configured by the
     // controller that sits on top of this hardware interface. Multiple inputs
     // can be enabled at the same time, in this case the non-primary inputs are
@@ -295,7 +296,7 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
     while (can_intf_.read_nonblocking()) {
         // repeat until CAN interface has no more messages
     }
-    osc_interfaces::msg::MotorState msg = parse_message();
+    osc_interfaces::msg::MotorState msg = generate_motor_state_message();
     pub_->publishData(msg);
     return return_type::OK;
 }
@@ -372,8 +373,8 @@ void ODriveHardwareInterface::set_axis_command_mode(const Axis& axis) {
     axis.send(clear_error_msg);
     axis.send(state_msg);
 }
-osc_interfaces::msg::MotorState ODriveHardwareInterface::parse_message() {
-    rclcpp::Clock::SharedPtr clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
+osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_message() {
+    static rclcpp::Clock::SharedPtr clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
     osc_interfaces::msg::MotorState msg;
     msg.header.stamp = clock->now();
     msg.motor_type = osc_interfaces::msg::MotorState::MOTOR_TYPE_PROP;
@@ -393,6 +394,7 @@ osc_interfaces::msg::MotorState ODriveHardwareInterface::parse_message() {
         msg.bus_voltage.push_back(axis.bus_voltage_);
         msg.bus_current.push_back(axis.bus_current_);
         msg.computed_torque.push_back(axis.torque_estimate_);
+        msg.motor_temperature.push_back(axis.motor_temperature_);
     }
     return msg;
 }
@@ -425,6 +427,16 @@ void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame) {
             if (Get_Bus_Voltage_Current_msg_t msg; try_decode(msg)) {
                 bus_voltage_ = msg.Bus_Voltage;
                 bus_current_ = msg.Bus_Current;
+            }
+        } break;
+        case Get_Temperature_msg_t::cmd_id: {
+            if (Get_Temperature_msg_t msg; try_decode(msg)) {
+                motor_temperature_ = msg.Motor_Temperature;
+            }
+        } break;
+        case Address_msg_t::cmd_id: {
+            if (Address_msg_t msg; try_decode(msg)) {
+                serial_number_ = msg.Serial_Number;
             }
         } break;
             // silently ignore unimplemented command IDs
