@@ -5,7 +5,7 @@
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "odrive_enums.h"
 #include "osc_interfaces/msg/motor_state.hpp"
-#include "osc_utils/hw_publisher.hpp"
+#include "osc_utils/simple_publisher.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "socket_can.hpp"
@@ -47,7 +47,7 @@ private:
     SocketCanIntf can_intf_;
     rclcpp::Time timestamp_;
     osc_interfaces::msg::MotorState generate_motor_state_message(const rclcpp::Time &  now);
-    std::shared_ptr<HwPublisher<osc_interfaces::msg::MotorState>> pub_;
+    std::shared_ptr<SimplePublisher<osc_interfaces::msg::MotorState>> pub_;
 };
 
 struct Axis {
@@ -156,7 +156,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
             axis.direction_multiplier_ = 1.0;
         }
     }
-    pub_ = std::make_shared<HwPublisher<osc_interfaces::msg::MotorState>>("NodeDynamixelState", "OdrvState");
+    pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorState>>("NodeDynamixelState", "OdrvState");
     return CallbackReturn::SUCCESS;
 }
 
