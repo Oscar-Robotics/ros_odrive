@@ -156,7 +156,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
             axis.direction_multiplier_ = 1.0;
         }
     }
-    pub_ = std::make_shared<HwPublisher<osc_interfaces::msg::MotorState>>("odrv_pub_node", "odrv_publisher");
+    pub_ = std::make_shared<HwPublisher<osc_interfaces::msg::MotorState>>("NodeDynamixelState", "OdrvState");
     return CallbackReturn::SUCCESS;
 }
 
