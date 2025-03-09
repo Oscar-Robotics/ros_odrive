@@ -95,6 +95,8 @@ struct Axis {
     bool vel_input_enabled_ = false;
     bool torque_input_enabled_ = false;
 
+    double error_code_ = ODRIVE_ERROR_NONE;
+
     template <typename T>
     void send(const T& msg) const {
         struct can_frame frame;
@@ -378,26 +380,79 @@ osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_me
     osc_interfaces::msg::MotorState msg;
     msg.header.stamp = now;
     msg.motor_type = osc_interfaces::msg::MotorState::MOTOR_TYPE_PROP;
-    msg.motor_control_mode = osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_VELOCITY; // A MODIFIER POUR ETRE
-                                                                                           // DYANMIQUE
 
-    for (auto& axis : axes_) {
-        msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_RUNNING
-        ); // A MODIFIER POUR ETRE DYANMIQUE
-        msg.motor_health.push_back(osc_interfaces::msg::MotorState::MOTOR_HEALTH_GOOD
-        ); // A MODIFIER POUR ETRE DYANMIQUE
-        msg.serial_number.push_back("allo"); // A MODIFIER POUR ETRE DYANMIQUE
-        msg.pos_setpoint.push_back(axis.pos_setpoint_);
-        msg.pos_actual.push_back(axis.pos_estimate_);
-        msg.vel_setpoint.push_back(axis.vel_setpoint_);
-        msg.vel_actual.push_back(axis.vel_estimate_);
+    for (auto& axis : axes_) {       
+        msg.serial_number.push_back(std::to_string(axis.serial_number_)); 
+
         msg.bus_voltage.push_back(axis.bus_voltage_);
         msg.bus_current.push_back(axis.bus_current_);
         msg.computed_torque.push_back(axis.torque_estimate_);
         msg.motor_temperature.push_back(axis.motor_temperature_);
+
+        if (axis.error_code_ != ODRIVE_ERROR_NONE) {
+            msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_ERROR);
+            msg.motor_control_mode.push_back(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_IDLE);
+            msg.command_setpoint.push_back(0.0);
+            msg.command_actual.push_back(0.0);
+            msg.motor_error.push_back(getErrorString(axis.error_code_));
+            continue;
+        }
+
+        if (axis.pos_input_enabled_) {
+            msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_RUNNING);
+            msg.motor_control_mode.push_back(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_POSITION);
+            msg.command_setpoint.push_back(axis.pos_setpoint_);
+            msg.command_actual.push_back(axis.pos_estimate_);
+        } else if (axis.vel_input_enabled_) {
+            msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_RUNNING);
+            msg.motor_control_mode.push_back(static_cast<uint8_t>(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_VELOCITY));
+            msg.command_setpoint.push_back(axis.vel_setpoint_);
+            msg.command_actual.push_back(axis.vel_estimate_);
+        } else if (axis.torque_input_enabled_) {
+            msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_RUNNING);
+            msg.motor_control_mode.push_back(static_cast<uint8_t>(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_TORQUE));
+            msg.command_setpoint.push_back(axis.torque_setpoint_);
+            msg.command_actual.push_back(axis.torque_estimate_);
+        } else {
+            msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_IDLE);
+            msg.motor_control_mode.push_back(static_cast<uint8_t>(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_IDLE));
+        }
     }
     return msg;
 }
+
+std::string getErrorString(uint32_t error_code) {
+    if (error_code == ODRIVE_ERROR_NONE) {
+        return "OK";
+    }
+
+    std::string error_message;
+    if (error_code & ODRIVE_ERROR_INITIALIZING) error_message = "Initializing";
+    if (error_code & ODRIVE_ERROR_SYSTEM_LEVEL) error_message = "System Level Error";
+    if (error_code & ODRIVE_ERROR_TIMING_ERROR) error_message = "Timing Error";
+    if (error_code & ODRIVE_ERROR_MISSING_ESTIMATE) error_message = "Missing Estimate";
+    if (error_code & ODRIVE_ERROR_BAD_CONFIG) error_message = "Bad Config";
+    if (error_code & ODRIVE_ERROR_DRV_FAULT) error_message = "DRV Fault";
+    if (error_code & ODRIVE_ERROR_MISSING_INPUT) error_message = "Missing Input";
+    if (error_code & ODRIVE_ERROR_DC_BUS_OVER_VOLTAGE) error_message = "DC Bus Over Voltage";
+    if (error_code & ODRIVE_ERROR_DC_BUS_UNDER_VOLTAGE) error_message = "DC Bus Under Voltage";
+    if (error_code & ODRIVE_ERROR_DC_BUS_OVER_CURRENT) error_message = "DC Bus Over Current";
+    if (error_code & ODRIVE_ERROR_DC_BUS_OVER_REGEN_CURRENT) error_message = "DC Bus Over Regen Current";
+    if (error_code & ODRIVE_ERROR_CURRENT_LIMIT_VIOLATION) error_message = "Current Limit Violation";
+    if (error_code & ODRIVE_ERROR_MOTOR_OVER_TEMP) error_message = "Motor Over Temperature";
+    if (error_code & ODRIVE_ERROR_INVERTER_OVER_TEMP) error_message = "Inverter Over Temperature";
+    if (error_code & ODRIVE_ERROR_VELOCITY_LIMIT_VIOLATION) error_message = "Velocity Limit Violation";
+    if (error_code & ODRIVE_ERROR_POSITION_LIMIT_VIOLATION) error_message = "Position Limit Violation";
+    if (error_code & ODRIVE_ERROR_WATCHDOG_TIMER_EXPIRED) error_message = "Watchdog Timer Expired";
+    if (error_code & ODRIVE_ERROR_ESTOP_REQUESTED) error_message = "E-Stop Requested";
+    if (error_code & ODRIVE_ERROR_SPINOUT_DETECTED) error_message = "Spinout Detected";
+    if (error_code & ODRIVE_ERROR_BRAKE_RESISTOR_DISARMED) error_message = "Brake Resistor Disarmed";
+    if (error_code & ODRIVE_ERROR_THERMISTOR_DISCONNECTED) error_message = "Thermistor Disconnected";
+    if (error_code & ODRIVE_ERROR_CALIBRATION_ERROR) error_message = "Calibration Error";
+
+    return error_message;
+}
+
 void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame) {
     uint8_t cmd = frame.can_id & 0x1f;
 
@@ -437,6 +492,11 @@ void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame) {
         case Address_msg_t::cmd_id: {
             if (Address_msg_t msg; try_decode(msg)) {
                 serial_number_ = msg.Serial_Number;
+            }
+        } break;
+        case Get_Error_msg_t::cmd_id: {
+            if (Get_Error_msg_t msg; try_decode(msg)) {
+                error_code_ = msg.Active_Errors;
             }
         } break;
             // silently ignore unimplemented command IDs
