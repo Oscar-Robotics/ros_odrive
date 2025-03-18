@@ -10,6 +10,9 @@
 #include "rclcpp/rclcpp.hpp"
 #include "socket_can.hpp"
 
+constexpr double MOTOR_STATE_PUBLISH_TIMEOUT_S = 0.5;
+constexpr double HEARTBEAT_TIMEOUT_S = 0.1;
+
 namespace odrive_ros2_control {
 
 class Axis;
@@ -46,6 +49,7 @@ private:
     std::string can_intf_name_;
     SocketCanIntf can_intf_;
     rclcpp::Time timestamp_;
+    rclcpp::Time timestamp_pub_;
     osc_interfaces::msg::MotorState generate_motor_state_message(const rclcpp::Time &  now);
     std::shared_ptr<SimplePublisher<osc_interfaces::msg::MotorState>> pub_;
 };
@@ -96,6 +100,9 @@ struct Axis {
     bool torque_input_enabled_ = false;
 
     double error_code_ = ODRIVE_ERROR_NONE;
+    double connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NONE;
+
+    rclcpp::Time timestamp_heartbeat_ = rclcpp::Time(0);
 
     template <typename T>
     void send(const T& msg) const {
@@ -298,8 +305,12 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
     while (can_intf_.read_nonblocking()) {
         // repeat until CAN interface has no more messages
     }
-    osc_interfaces::msg::MotorState msg = generate_motor_state_message(timestamp);
-    pub_->publishData(msg);
+    if ((timestamp_.seconds() - timestamp_pub_.seconds()) > MOTOR_STATE_PUBLISH_TIMEOUT_S) {
+        osc_interfaces::msg::MotorState msg = generate_motor_state_message(timestamp);
+        pub_->publishData(msg);
+        timestamp_pub_ = timestamp_;
+    }
+    
     return return_type::OK;
 }
 
@@ -389,12 +400,13 @@ osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_me
         msg.computed_torque.push_back(axis.torque_estimate_);
         msg.motor_temperature.push_back(axis.motor_temperature_);
 
+        msg.connection_motor_error.push_back(axis.connection_error_);
         if (axis.error_code_ != ODRIVE_ERROR_NONE) {
             msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_ERROR);
             msg.motor_control_mode.push_back(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_IDLE);
             msg.command_setpoint.push_back(0.0);
             msg.command_actual.push_back(0.0);
-            msg.motor_error.push_back(getErrorString(axis.error_code_));
+            msg.internal_motor_error.push_back(get_error_string(axis.error_code_));
             continue;
         }
 
@@ -421,7 +433,7 @@ osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_me
     return msg;
 }
 
-std::string getErrorString(uint32_t error_code) {
+std::string get_error_string(uint32_t error_code) {
     if (error_code == ODRIVE_ERROR_NONE) {
         return "OK";
     }
@@ -453,7 +465,7 @@ std::string getErrorString(uint32_t error_code) {
     return error_message;
 }
 
-void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame) {
+void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
     uint8_t cmd = frame.can_id & 0x1f;
 
     auto try_decode = [&]<typename TMsg>(TMsg& msg) {
@@ -494,13 +506,22 @@ void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame) {
                 serial_number_ = msg.Serial_Number;
             }
         } break;
-        case Get_Error_msg_t::cmd_id: {
-            if (Get_Error_msg_t msg; try_decode(msg)) {
-                error_code_ = msg.Active_Errors;
+        case Heartbeat_msg_t::cmd_id: {
+            if (Heartbeat_msg_t msg; try_decode(msg)) {
+                timestamp_heartbeat_ = timestamp;
+                error_code_ = msg.Axis_Error;
             }
         } break;
             // silently ignore unimplemented command IDs
     }
+    if (timestamp_heartbeat_ == rclcpp::Time(0) ) {
+        connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NEVER_CONNECTED;
+    } else if (timestamp.seconds() - timestamp_heartbeat_.seconds() > HEARTBEAT_TIMEOUT_S) {
+        connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NO_RESPONSE;
+    } else {
+        connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NONE;
+    }
+
 }
 
 PLUGINLIB_EXPORT_CLASS(odrive_ros2_control::ODriveHardwareInterface, hardware_interface::SystemInterface)
