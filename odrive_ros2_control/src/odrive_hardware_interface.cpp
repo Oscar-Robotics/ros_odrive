@@ -51,6 +51,7 @@ private:
     rclcpp::Time timestamp_;
     rclcpp::Time timestamp_pub_;
     osc_interfaces::msg::MotorState generate_motor_state_message(const rclcpp::Time &  now);
+    std::string get_error_string(uint32_t error_code);
     std::shared_ptr<SimplePublisher<osc_interfaces::msg::MotorState>> pub_;
 };
 
@@ -99,7 +100,7 @@ struct Axis {
     bool vel_input_enabled_ = false;
     bool torque_input_enabled_ = false;
 
-    double error_code_ = ODRIVE_ERROR_NONE;
+    uint32_t error_code_ = ODRIVE_ERROR_NONE;
     double connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NONE;
 
     rclcpp::Time timestamp_heartbeat_ = rclcpp::Time(0);
@@ -393,7 +394,7 @@ osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_me
     msg.motor_type = osc_interfaces::msg::MotorState::MOTOR_TYPE_PROP;
 
     for (auto& axis : axes_) {       
-        msg.serial_number.push_back(std::to_string(axis.serial_number_)); 
+        msg.uid.push_back(std::to_string(axis.serial_number_)); 
 
         msg.bus_voltage.push_back(axis.bus_voltage_);
         msg.bus_current.push_back(axis.bus_current_);
@@ -433,7 +434,7 @@ osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_me
     return msg;
 }
 
-std::string get_error_string(uint32_t error_code) {
+std::string ODriveHardwareInterface::get_error_string(uint32_t error_code) {
     if (error_code == ODRIVE_ERROR_NONE) {
         return "OK";
     }
