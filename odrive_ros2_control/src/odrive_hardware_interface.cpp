@@ -49,8 +49,8 @@ private:
     std::string can_intf_name_;
     SocketCanIntf can_intf_;
     rclcpp::Time timestamp_;
-    rclcpp::Time timestamp_pub_;
-    osc_interfaces::msg::MotorState generate_motor_state_message(const rclcpp::Time &  now);
+    rclcpp::Time timestamp_pub_{rclcpp::Clock().now()};
+    osc_interfaces::msg::MotorState generate_motor_state_msg(const rclcpp::Time &  now);
     std::string get_error_string(uint32_t error_code);
     std::shared_ptr<SimplePublisher<osc_interfaces::msg::MotorState>> pub_;
 };
@@ -307,7 +307,7 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
         // repeat until CAN interface has no more messages
     }
     if ((timestamp_.seconds() - timestamp_pub_.seconds()) > MOTOR_STATE_PUBLISH_TIMEOUT_S) {
-        osc_interfaces::msg::MotorState msg = generate_motor_state_message(timestamp);
+        osc_interfaces::msg::MotorState msg = generate_motor_state_msg(timestamp);
         pub_->publishData(msg);
         timestamp_pub_ = timestamp_;
     }
@@ -388,7 +388,8 @@ void ODriveHardwareInterface::set_axis_command_mode(const Axis& axis) {
     axis.send(clear_error_msg);
     axis.send(state_msg);
 }
-osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_message(const rclcpp::Time &  now) {
+
+osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_msg(const rclcpp::Time &  now) {
     osc_interfaces::msg::MotorState msg;
     msg.header.stamp = now;
     msg.motor_type = osc_interfaces::msg::MotorState::MOTOR_TYPE_PROP;
