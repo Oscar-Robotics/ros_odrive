@@ -49,8 +49,8 @@ private:
     std::string can_intf_name_;
     SocketCanIntf can_intf_;
     rclcpp::Time timestamp_;
-    rclcpp::Time timestamp_pub_{rclcpp::Clock().now()};
-    osc_interfaces::msg::MotorState generate_motor_state_msg(const rclcpp::Time &  now);
+    rclcpp::Time timestamp_pub_;
+    osc_interfaces::msg::MotorState generate_motor_state_msg(const rclcpp::Time& now);
     std::string get_error_string(uint32_t error_code);
     std::shared_ptr<SimplePublisher<osc_interfaces::msg::MotorState>> pub_;
 };
@@ -103,7 +103,7 @@ struct Axis {
     uint32_t error_code_ = ODRIVE_ERROR_NONE;
     double connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NONE;
 
-    rclcpp::Time timestamp_heartbeat_ = rclcpp::Time(0);
+    rclcpp::Time timestamp_heartbeat_;
 
     template <typename T>
     void send(const T& msg) const {
@@ -166,6 +166,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
             axis.direction_multiplier_ = 1.0;
         }
     }
+
     pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorState>>("NodeDynamixelState", "OdriveState");
     return CallbackReturn::SUCCESS;
 }
@@ -270,7 +271,8 @@ return_type ODriveHardwareInterface::perform_command_mode_switch(
         std::array<std::pair<std::string, bool*>, 3> interfaces = {
             {{info_.joints[i].name + "/" + hardware_interface::HW_IF_POSITION, &axis.pos_input_enabled_},
              {info_.joints[i].name + "/" + hardware_interface::HW_IF_VELOCITY, &axis.vel_input_enabled_},
-             {info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT, &axis.torque_input_enabled_}}};
+             {info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT, &axis.torque_input_enabled_}}
+        };
 
         bool mode_switch = false;
 
@@ -311,7 +313,7 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
         pub_->publishData(msg);
         timestamp_pub_ = timestamp_;
     }
-    
+
     return return_type::OK;
 }
 
@@ -389,13 +391,13 @@ void ODriveHardwareInterface::set_axis_command_mode(const Axis& axis) {
     axis.send(state_msg);
 }
 
-osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_msg(const rclcpp::Time &  now) {
+osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_msg(const rclcpp::Time& now) {
     osc_interfaces::msg::MotorState msg;
     msg.header.stamp = now;
     msg.motor_type = osc_interfaces::msg::MotorState::MOTOR_TYPE_PROP;
 
-    for (auto& axis : axes_) {       
-        msg.uid.push_back(std::to_string(axis.serial_number_)); 
+    for (auto& axis : axes_) {
+        msg.uid.push_back(std::to_string(axis.serial_number_));
 
         msg.bus_voltage.push_back(axis.bus_voltage_);
         msg.bus_current.push_back(axis.bus_current_);
@@ -419,17 +421,23 @@ osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_ms
             msg.command_actual.push_back(axis.pos_estimate_);
         } else if (axis.vel_input_enabled_) {
             msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_RUNNING);
-            msg.motor_control_mode.push_back(static_cast<uint8_t>(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_VELOCITY));
+            msg.motor_control_mode.push_back(
+                static_cast<uint8_t>(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_VELOCITY)
+            );
             msg.command_setpoint.push_back(axis.vel_setpoint_);
             msg.command_actual.push_back(axis.vel_estimate_);
         } else if (axis.torque_input_enabled_) {
             msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_RUNNING);
-            msg.motor_control_mode.push_back(static_cast<uint8_t>(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_TORQUE));
+            msg.motor_control_mode.push_back(
+                static_cast<uint8_t>(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_TORQUE)
+            );
             msg.command_setpoint.push_back(axis.torque_setpoint_);
             msg.command_actual.push_back(axis.torque_estimate_);
         } else {
             msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_IDLE);
-            msg.motor_control_mode.push_back(static_cast<uint8_t>(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_IDLE));
+            msg.motor_control_mode.push_back(
+                static_cast<uint8_t>(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_IDLE)
+            );
         }
     }
     return msg;
@@ -441,28 +449,50 @@ std::string ODriveHardwareInterface::get_error_string(uint32_t error_code) {
     }
 
     std::string error_message;
-    if (error_code & ODRIVE_ERROR_INITIALIZING) error_message = "Initializing";
-    if (error_code & ODRIVE_ERROR_SYSTEM_LEVEL) error_message = "System Level Error";
-    if (error_code & ODRIVE_ERROR_TIMING_ERROR) error_message = "Timing Error";
-    if (error_code & ODRIVE_ERROR_MISSING_ESTIMATE) error_message = "Missing Estimate";
-    if (error_code & ODRIVE_ERROR_BAD_CONFIG) error_message = "Bad Config";
-    if (error_code & ODRIVE_ERROR_DRV_FAULT) error_message = "DRV Fault";
-    if (error_code & ODRIVE_ERROR_MISSING_INPUT) error_message = "Missing Input";
-    if (error_code & ODRIVE_ERROR_DC_BUS_OVER_VOLTAGE) error_message = "DC Bus Over Voltage";
-    if (error_code & ODRIVE_ERROR_DC_BUS_UNDER_VOLTAGE) error_message = "DC Bus Under Voltage";
-    if (error_code & ODRIVE_ERROR_DC_BUS_OVER_CURRENT) error_message = "DC Bus Over Current";
-    if (error_code & ODRIVE_ERROR_DC_BUS_OVER_REGEN_CURRENT) error_message = "DC Bus Over Regen Current";
-    if (error_code & ODRIVE_ERROR_CURRENT_LIMIT_VIOLATION) error_message = "Current Limit Violation";
-    if (error_code & ODRIVE_ERROR_MOTOR_OVER_TEMP) error_message = "Motor Over Temperature";
-    if (error_code & ODRIVE_ERROR_INVERTER_OVER_TEMP) error_message = "Inverter Over Temperature";
-    if (error_code & ODRIVE_ERROR_VELOCITY_LIMIT_VIOLATION) error_message = "Velocity Limit Violation";
-    if (error_code & ODRIVE_ERROR_POSITION_LIMIT_VIOLATION) error_message = "Position Limit Violation";
-    if (error_code & ODRIVE_ERROR_WATCHDOG_TIMER_EXPIRED) error_message = "Watchdog Timer Expired";
-    if (error_code & ODRIVE_ERROR_ESTOP_REQUESTED) error_message = "E-Stop Requested";
-    if (error_code & ODRIVE_ERROR_SPINOUT_DETECTED) error_message = "Spinout Detected";
-    if (error_code & ODRIVE_ERROR_BRAKE_RESISTOR_DISARMED) error_message = "Brake Resistor Disarmed";
-    if (error_code & ODRIVE_ERROR_THERMISTOR_DISCONNECTED) error_message = "Thermistor Disconnected";
-    if (error_code & ODRIVE_ERROR_CALIBRATION_ERROR) error_message = "Calibration Error";
+    if (error_code & ODRIVE_ERROR_INITIALIZING)
+        error_message = "Initializing";
+    if (error_code & ODRIVE_ERROR_SYSTEM_LEVEL)
+        error_message = "System Level Error";
+    if (error_code & ODRIVE_ERROR_TIMING_ERROR)
+        error_message = "Timing Error";
+    if (error_code & ODRIVE_ERROR_MISSING_ESTIMATE)
+        error_message = "Missing Estimate";
+    if (error_code & ODRIVE_ERROR_BAD_CONFIG)
+        error_message = "Bad Config";
+    if (error_code & ODRIVE_ERROR_DRV_FAULT)
+        error_message = "DRV Fault";
+    if (error_code & ODRIVE_ERROR_MISSING_INPUT)
+        error_message = "Missing Input";
+    if (error_code & ODRIVE_ERROR_DC_BUS_OVER_VOLTAGE)
+        error_message = "DC Bus Over Voltage";
+    if (error_code & ODRIVE_ERROR_DC_BUS_UNDER_VOLTAGE)
+        error_message = "DC Bus Under Voltage";
+    if (error_code & ODRIVE_ERROR_DC_BUS_OVER_CURRENT)
+        error_message = "DC Bus Over Current";
+    if (error_code & ODRIVE_ERROR_DC_BUS_OVER_REGEN_CURRENT)
+        error_message = "DC Bus Over Regen Current";
+    if (error_code & ODRIVE_ERROR_CURRENT_LIMIT_VIOLATION)
+        error_message = "Current Limit Violation";
+    if (error_code & ODRIVE_ERROR_MOTOR_OVER_TEMP)
+        error_message = "Motor Over Temperature";
+    if (error_code & ODRIVE_ERROR_INVERTER_OVER_TEMP)
+        error_message = "Inverter Over Temperature";
+    if (error_code & ODRIVE_ERROR_VELOCITY_LIMIT_VIOLATION)
+        error_message = "Velocity Limit Violation";
+    if (error_code & ODRIVE_ERROR_POSITION_LIMIT_VIOLATION)
+        error_message = "Position Limit Violation";
+    if (error_code & ODRIVE_ERROR_WATCHDOG_TIMER_EXPIRED)
+        error_message = "Watchdog Timer Expired";
+    if (error_code & ODRIVE_ERROR_ESTOP_REQUESTED)
+        error_message = "E-Stop Requested";
+    if (error_code & ODRIVE_ERROR_SPINOUT_DETECTED)
+        error_message = "Spinout Detected";
+    if (error_code & ODRIVE_ERROR_BRAKE_RESISTOR_DISARMED)
+        error_message = "Brake Resistor Disarmed";
+    if (error_code & ODRIVE_ERROR_THERMISTOR_DISCONNECTED)
+        error_message = "Thermistor Disconnected";
+    if (error_code & ODRIVE_ERROR_CALIBRATION_ERROR)
+        error_message = "Calibration Error";
 
     return error_message;
 }
@@ -516,14 +546,16 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
         } break;
             // silently ignore unimplemented command IDs
     }
-    if (timestamp_heartbeat_ == rclcpp::Time(0) ) {
+
+    if ((timestamp_heartbeat_.get_clock_type() != timestamp.get_clock_type())
+        || (timestamp_heartbeat_ == rclcpp::Time(0, 0, timestamp.get_clock_type()))) {
+        timestamp_heartbeat_ = rclcpp::Time(0, 0, timestamp.get_clock_type());
         connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NEVER_CONNECTED;
     } else if (timestamp.seconds() - timestamp_heartbeat_.seconds() > HEARTBEAT_TIMEOUT_S) {
         connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NO_RESPONSE;
     } else {
         connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NONE;
     }
-
 }
 
 PLUGINLIB_EXPORT_CLASS(odrive_ros2_control::ODriveHardwareInterface, hardware_interface::SystemInterface)
