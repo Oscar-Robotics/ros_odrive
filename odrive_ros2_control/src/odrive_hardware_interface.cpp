@@ -49,7 +49,7 @@ private:
     std::string can_intf_name_;
     SocketCanIntf can_intf_;
     rclcpp::Time timestamp_;
-    rclcpp::Time timestamp_pub_;
+    rclcpp::Time timestamp_pub_{rclcpp::Time(0, 0, RCL_ROS_TIME)};
     osc_interfaces::msg::MotorState generate_motor_state_msg(const rclcpp::Time& now);
     std::string get_error_string(uint32_t error_code);
     std::shared_ptr<SimplePublisher<osc_interfaces::msg::MotorState>> pub_;
@@ -103,7 +103,7 @@ struct Axis {
     uint32_t error_code_ = ODRIVE_ERROR_NONE;
     double connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NONE;
 
-    rclcpp::Time timestamp_heartbeat_;
+    rclcpp::Time timestamp_heartbeat_{rclcpp::Time(0, 0, RCL_ROS_TIME)};
 
     template <typename T>
     void send(const T& msg) const {
@@ -167,7 +167,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         }
     }
 
-    pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorState>>("NodeDynamixelState", "OdriveState");
+    pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorState>>("NodeDynamixelState", "odrive_state");
     return CallbackReturn::SUCCESS;
 }
 
@@ -313,7 +313,6 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
         pub_->publishData(msg);
         timestamp_pub_ = timestamp_;
     }
-
     return return_type::OK;
 }
 
@@ -547,9 +546,7 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
             // silently ignore unimplemented command IDs
     }
 
-    if ((timestamp_heartbeat_.get_clock_type() != timestamp.get_clock_type())
-        || (timestamp_heartbeat_ == rclcpp::Time(0, 0, timestamp.get_clock_type()))) {
-        timestamp_heartbeat_ = rclcpp::Time(0, 0, timestamp.get_clock_type());
+    if (timestamp_heartbeat_ == rclcpp::Time(0, 0, timestamp.get_clock_type())) {
         connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NEVER_CONNECTED;
     } else if (timestamp.seconds() - timestamp_heartbeat_.seconds() > HEARTBEAT_TIMEOUT_S) {
         connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NO_RESPONSE;
