@@ -398,10 +398,10 @@ osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_ms
     for (auto& axis : axes_) {
         msg.uid.push_back(std::to_string(axis.serial_number_));
 
-        msg.bus_voltage.push_back(axis.bus_voltage_);
-        msg.bus_current.push_back(axis.bus_current_);
-        msg.computed_torque.push_back(axis.torque_estimate_);
-        msg.motor_temperature.push_back(axis.motor_temperature_);
+        msg.bus_voltage_v.push_back(axis.bus_voltage_);
+        msg.bus_current_ma.push_back(axis.bus_current_);
+        msg.computed_torque_nm.push_back(axis.torque_estimate_);
+        msg.motor_temperature_c.push_back(axis.motor_temperature_);
 
         msg.connection_motor_error.push_back(axis.connection_error_);
         if (axis.error_code_ != ODRIVE_ERROR_NONE) {
