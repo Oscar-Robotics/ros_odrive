@@ -10,8 +10,6 @@
 #include "rclcpp/rclcpp.hpp"
 #include "socket_can.hpp"
 
-constexpr double MOTOR_STATE_PUBLISH_TIMEOUT_S = 0.5;
-constexpr double HEARTBEAT_TIMEOUT_S = 0.1;
 
 namespace odrive_ros2_control {
 
@@ -53,6 +51,7 @@ private:
     osc_interfaces::msg::MotorState generate_motor_state_msg(const rclcpp::Time& now);
     std::string get_error_string(uint32_t error_code);
     std::shared_ptr<SimplePublisher<osc_interfaces::msg::MotorState>> pub_;
+    double pub_timeout_s_;
 };
 
 struct Axis {
@@ -104,6 +103,7 @@ struct Axis {
     double connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NONE;
 
     rclcpp::Time timestamp_heartbeat_{rclcpp::Time(0, 0, RCL_ROS_TIME)};
+    double heartbeat_timeout_s_;
 
     template <typename T>
     void send(const T& msg) const {
@@ -128,6 +128,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         return CallbackReturn::ERROR;
     }
 
+    pub_timeout_s_ = 1 / std::stod(info.hardware_parameters.at("motor_state_pub_rate_hz"));
     can_intf_name_ = info_.hardware_parameters["can"];
 
     for (auto& joint : info_.joints) {
@@ -144,6 +145,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         }
 
         auto& axis = axes_.back();
+        axis.heartbeat_timeout_s_ = std::stod(info.hardware_parameters.at("heartbeat_timeout_period_s"));
 
         auto rotation_param_it = joint.parameters.find("inverse_rotation");
         if (rotation_param_it != joint.parameters.end()) {
@@ -167,7 +169,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         }
     }
 
-    pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorState>>("NodeDynamixelState", "odrive_state");
+    pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorState>>("odrive_hw", "odrive_state");
     return CallbackReturn::SUCCESS;
 }
 
@@ -308,7 +310,7 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
     while (can_intf_.read_nonblocking()) {
         // repeat until CAN interface has no more messages
     }
-    if ((timestamp_.seconds() - timestamp_pub_.seconds()) > MOTOR_STATE_PUBLISH_TIMEOUT_S) {
+    if ((timestamp_.seconds() - timestamp_pub_.seconds()) > pub_timeout_s_) {
         osc_interfaces::msg::MotorState msg = generate_motor_state_msg(timestamp);
         pub_->publishData(msg);
         timestamp_pub_ = timestamp_;
@@ -399,7 +401,7 @@ osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_ms
         msg.uid.push_back(std::to_string(axis.serial_number_));
 
         msg.bus_voltage_v.push_back(axis.bus_voltage_);
-        msg.bus_current_ma.push_back(axis.bus_current_);
+        msg.bus_current_ma.push_back(axis.bus_current_ * 1000);
         msg.computed_torque_nm.push_back(axis.torque_estimate_);
         msg.motor_temperature_c.push_back(axis.motor_temperature_);
 
@@ -548,7 +550,7 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
 
     if (timestamp_heartbeat_ == rclcpp::Time(0, 0, timestamp.get_clock_type())) {
         connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NEVER_CONNECTED;
-    } else if (timestamp.seconds() - timestamp_heartbeat_.seconds() > HEARTBEAT_TIMEOUT_S) {
+    } else if (timestamp.seconds() - timestamp_heartbeat_.seconds() > heartbeat_timeout_s_) {
         connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NO_RESPONSE;
     } else {
         connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NONE;
