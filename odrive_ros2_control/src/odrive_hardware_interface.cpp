@@ -89,7 +89,6 @@ struct Axis {
     double bus_current_ = NAN;
     double direction_multiplier_ = 1.0;
 
-    double serial_number_ = NAN;
     // Indicates which controller inputs are enabled. This is configured by the
     // controller that sits on top of this hardware interface. Multiple inputs
     // can be enabled at the same time, in this case the non-primary inputs are
@@ -398,7 +397,7 @@ osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_ms
     msg.motor_type = osc_interfaces::msg::MotorState::MOTOR_TYPE_PROP;
 
     for (auto& axis : axes_) {
-        msg.uid.push_back(std::to_string(axis.serial_number_));
+        msg.uid.push_back(static_cast<uint8_t>(axis.node_id_));
 
         msg.bus_voltage_v.push_back(axis.bus_voltage_);
         msg.bus_current_ma.push_back(axis.bus_current_ * 1000);
@@ -532,11 +531,6 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
         case Get_Temperature_msg_t::cmd_id: {
             if (Get_Temperature_msg_t msg; try_decode(msg)) {
                 motor_temperature_ = msg.Motor_Temperature;
-            }
-        } break;
-        case Address_msg_t::cmd_id: {
-            if (Address_msg_t msg; try_decode(msg)) {
-                serial_number_ = msg.Serial_Number;
             }
         } break;
         case Heartbeat_msg_t::cmd_id: {
