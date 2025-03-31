@@ -5,6 +5,7 @@
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "odrive_enums.h"
 #include "osc_interfaces/msg/motor_state.hpp"
+#include "osc_interfaces/msg/motors_states.hpp"
 #include "osc_utils/simple_publisher.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -48,10 +49,16 @@ private:
     SocketCanIntf can_intf_;
     rclcpp::Time timestamp_;
     rclcpp::Time timestamp_pub_{rclcpp::Time(0, 0, RCL_ROS_TIME)};
-    osc_interfaces::msg::MotorState generate_motor_state_msg(const rclcpp::Time& now);
+    osc_interfaces::msg::MotorsStates generate_motors_states_msg(const rclcpp::Time& now);
     std::string get_error_string(uint32_t error_code);
-    std::shared_ptr<SimplePublisher<osc_interfaces::msg::MotorState>> pub_;
+    std::shared_ptr<SimplePublisher<osc_interfaces::msg::MotorsStates>> pub_;
     double pub_timeout_s_;
+};
+
+enum connection_states {
+    unconnected = 0,
+    timeout = 1,
+    connected = 2
 };
 
 struct Axis {
@@ -99,7 +106,7 @@ struct Axis {
     bool torque_input_enabled_ = false;
 
     uint32_t error_code_ = ODRIVE_ERROR_NONE;
-    double connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NONE;
+    connection_states connection_state_ = connection_states::unconnected;
 
     rclcpp::Time timestamp_heartbeat_{rclcpp::Time(0, 0, RCL_ROS_TIME)};
     double heartbeat_timeout_s_;
@@ -168,7 +175,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         }
     }
 
-    pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorState>>("odrive_hw", "odrive_state");
+    pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorsStates>>("odrive_hw", "odrive_state");
     return CallbackReturn::SUCCESS;
 }
 
@@ -310,7 +317,7 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
         // repeat until CAN interface has no more messages
     }
     if ((timestamp_.seconds() - timestamp_pub_.seconds()) > pub_timeout_s_) {
-        osc_interfaces::msg::MotorState msg = generate_motor_state_msg(timestamp);
+        osc_interfaces::msg::MotorsStates msg = generate_motors_states_msg(timestamp);
         pub_->publishData(msg);
         timestamp_pub_ = timestamp_;
     }
@@ -391,55 +398,68 @@ void ODriveHardwareInterface::set_axis_command_mode(const Axis& axis) {
     axis.send(state_msg);
 }
 
-osc_interfaces::msg::MotorState ODriveHardwareInterface::generate_motor_state_msg(const rclcpp::Time& now) {
-    osc_interfaces::msg::MotorState msg;
+osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_states_msg(const rclcpp::Time& now) {
+    osc_interfaces::msg::MotorsStates msg;
     msg.header.stamp = now;
-    msg.motor_type = osc_interfaces::msg::MotorState::MOTOR_TYPE_PROP;
+    msg.motors_type = "Odrive hardware";
 
     for (auto& axis : axes_) {
-        msg.uid.push_back(static_cast<uint8_t>(axis.node_id_));
+        osc_interfaces::msg::MotorState motor_msg;
+        
+        motor_msg.uid = static_cast<uint8_t>(axis.node_id_);
 
-        msg.bus_voltage_v.push_back(axis.bus_voltage_);
-        msg.bus_current_ma.push_back(axis.bus_current_ * 1000);
-        msg.computed_torque_nm.push_back(axis.torque_estimate_);
-        msg.motor_temperature_c.push_back(axis.motor_temperature_);
-
-        msg.connection_motor_error.push_back(axis.connection_error_);
-        if (axis.error_code_ != ODRIVE_ERROR_NONE) {
-            msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_ERROR);
-            msg.motor_control_mode.push_back(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_IDLE);
-            msg.command_setpoint.push_back(0.0);
-            msg.command_actual.push_back(0.0);
-            msg.internal_motor_error.push_back(get_error_string(axis.error_code_));
+        if (axis.connection_state_ != connection_states::connected) {
+            switch (axis.connection_state_) {
+                case connection_states::unconnected:
+                    motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_UNREACHABLE;
+                    break;
+                
+                case connection_states::timeout:
+                    motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_COMMUNICATION_TIMEOUT;
+                    break;
+            }
             continue;
         }
 
-        if (axis.pos_input_enabled_) {
-            msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_RUNNING);
-            msg.motor_control_mode.push_back(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_POSITION);
-            msg.command_setpoint.push_back(axis.pos_setpoint_);
-            msg.command_actual.push_back(axis.pos_estimate_);
-        } else if (axis.vel_input_enabled_) {
-            msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_RUNNING);
-            msg.motor_control_mode.push_back(
-                static_cast<uint8_t>(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_VELOCITY)
-            );
-            msg.command_setpoint.push_back(axis.vel_setpoint_);
-            msg.command_actual.push_back(axis.vel_estimate_);
-        } else if (axis.torque_input_enabled_) {
-            msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_RUNNING);
-            msg.motor_control_mode.push_back(
-                static_cast<uint8_t>(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_TORQUE)
-            );
-            msg.command_setpoint.push_back(axis.torque_setpoint_);
-            msg.command_actual.push_back(axis.torque_estimate_);
+        motor_msg.bus_voltage_v = axis.bus_voltage_;
+        motor_msg.bus_current_ma = axis.bus_current_ * 1000;
+        motor_msg.computed_torque_nm = axis.torque_estimate_;
+        motor_msg.temperature_c = axis.motor_temperature_;
+        
+
+        if (axis.error_code_ != ODRIVE_ERROR_NONE) {
+            motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_ERROR;
+            motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
+            motor_msg.command_setpoint = 0.0;
+            motor_msg.command_actual = 0.0;
+            motor_msg.internal_motor_error = get_error_string(axis.error_code_);
         } else {
-            msg.motor_status.push_back(osc_interfaces::msg::MotorState::MOTOR_STATUS_IDLE);
-            msg.motor_control_mode.push_back(
-                static_cast<uint8_t>(osc_interfaces::msg::MotorState::MOTOR_CONTROL_MODE_IDLE)
-            );
+            if (axis.pos_input_enabled_) {
+                motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
+                motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_POSITION;
+                motor_msg.command_setpoint = axis.pos_setpoint_;
+                motor_msg.command_actual = axis.pos_estimate_;
+            } else if (axis.vel_input_enabled_) {
+                motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
+                motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_VELOCITY;
+                motor_msg.command_setpoint = axis.vel_setpoint_;
+                motor_msg.command_actual = axis.vel_estimate_;
+            } else if (axis.torque_input_enabled_) {
+                motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
+                motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_TORQUE;
+                motor_msg.command_setpoint = axis.torque_setpoint_;
+                motor_msg.command_actual = axis.torque_estimate_;
+            } else {
+                motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_IDLE;
+                motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
+                motor_msg.command_setpoint = 0.0;
+                motor_msg.command_actual = 0.0;
+            }
         }
+
+        msg.data.push_back(motor_msg);
     }
+
     return msg;
 }
 
@@ -542,12 +562,12 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
             // silently ignore unimplemented command IDs
     }
 
-    if (timestamp_heartbeat_ == rclcpp::Time(0, 0, timestamp.get_clock_type())) {
-        connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NEVER_CONNECTED;
+    if (timestamp_heartbeat_ == rclcpp::Time(0, 0, RCL_ROS_TIME)) {
+        connection_state_ = connection_states::unconnected;
     } else if (timestamp.seconds() - timestamp_heartbeat_.seconds() > heartbeat_timeout_s_) {
-        connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NO_RESPONSE;
+        connection_state_ = connection_states::timeout;
     } else {
-        connection_error_ = osc_interfaces::msg::MotorState::MOTOR_CONNECTION_ERROR_NONE;
+        connection_state_ = connection_states::connected;
     }
 }
 
