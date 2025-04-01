@@ -42,7 +42,7 @@ private:
     void on_can_msg(const can_frame& frame);
     void set_axis_command_mode(const Axis& axis);
     std::string get_error_string(uint32_t error_code);
-    osc_interfaces::msg::MotorsStates generate_motors_states_msg(const rclcpp::Time& now);
+    osc_interfaces::msg::MotorsStates generate_motors_states_msg(const rclcpp::Time& timestamp);
 
     bool active_;
     EpollEventLoop event_loop_;
@@ -53,12 +53,7 @@ private:
     rclcpp::Time timestamp_pub_;
     std::shared_ptr<SimplePublisher<osc_interfaces::msg::MotorsStates>> pub_;
     double pub_period_s_;
-};
-
-enum connection_states {
-    unconnected = 0,
-    timeout = 1,
-    connected = 2
+    double heartbeat_timeout_s_;
 };
 
 struct Axis {
@@ -106,10 +101,8 @@ struct Axis {
     bool torque_input_enabled_ = false;
 
     uint32_t error_code_ = ODRIVE_ERROR_NONE;
-    connection_states connection_state_ = connection_states::unconnected;
 
     rclcpp::Time timestamp_heartbeat_{rclcpp::Time(0, 0, RCL_ROS_TIME)};
-    double heartbeat_timeout_s_;
 
     template <typename T>
     void send(const T& msg) const {
@@ -177,7 +170,6 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         }
 
         auto& axis = axes_.back();
-        axis.heartbeat_timeout_s_ = std::stod(info.hardware_parameters.at("heartbeat_timeout_period_s"));
 
         auto rotation_param_it = joint.parameters.find("inverse_rotation");
         if (rotation_param_it != joint.parameters.end()) {
@@ -202,6 +194,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
     }
 
     pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorsStates>>("odrive_hw", "odrive_state");
+    heartbeat_timeout_s_ = std::stod(info.hardware_parameters.at("heartbeat_timeout_period_s"));
     timestamp_pub_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
     return CallbackReturn::SUCCESS;
 }
@@ -425,9 +418,9 @@ void ODriveHardwareInterface::set_axis_command_mode(const Axis& axis) {
     axis.send(state_msg);
 }
 
-osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_states_msg(const rclcpp::Time& now) {
+osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_states_msg(const rclcpp::Time& timestamp) {
     osc_interfaces::msg::MotorsStates msg;
-    msg.header.stamp = now;
+    msg.header.stamp = timestamp;
     msg.motors_type = "Odrive hardware";
 
     for (auto& axis : axes_) {
@@ -435,16 +428,11 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
         
         motor_msg.uid = static_cast<uint8_t>(axis.node_id_);
 
-        if (axis.connection_state_ != connection_states::connected) {
-            switch (axis.connection_state_) {
-                case connection_states::unconnected:
-                    motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_UNREACHABLE;
-                    break;
-                
-                case connection_states::timeout:
-                    motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_COMMUNICATION_TIMEOUT;
-                    break;
-            }
+        if (axis.timestamp_heartbeat_ == rclcpp::Time(0, 0, RCL_ROS_TIME)) {
+            motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_UNREACHABLE;
+            continue;
+        } else if (timestamp.seconds() - axis.timestamp_heartbeat_.seconds() > heartbeat_timeout_s_) {
+            motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_COMMUNICATION_TIMEOUT;
             continue;
         }
 
@@ -533,14 +521,6 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
             }
         } break;
             // silently ignore unimplemented command IDs
-    }
-
-    if (timestamp_heartbeat_ == rclcpp::Time(0, 0, RCL_ROS_TIME)) {
-        connection_state_ = connection_states::unconnected;
-    } else if (timestamp.seconds() - timestamp_heartbeat_.seconds() > heartbeat_timeout_s_) {
-        connection_state_ = connection_states::timeout;
-    } else {
-        connection_state_ = connection_states::connected;
     }
 }
 
