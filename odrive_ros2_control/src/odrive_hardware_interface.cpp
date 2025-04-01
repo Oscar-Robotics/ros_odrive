@@ -41,6 +41,8 @@ public:
 private:
     void on_can_msg(const can_frame& frame);
     void set_axis_command_mode(const Axis& axis);
+    std::string get_error_string(uint32_t error_code);
+    osc_interfaces::msg::MotorsStates generate_motors_states_msg(const rclcpp::Time& now);
 
     bool active_;
     EpollEventLoop event_loop_;
@@ -48,11 +50,9 @@ private:
     std::string can_intf_name_;
     SocketCanIntf can_intf_;
     rclcpp::Time timestamp_;
-    rclcpp::Time timestamp_pub_{rclcpp::Time(0, 0, RCL_ROS_TIME)};
-    osc_interfaces::msg::MotorsStates generate_motors_states_msg(const rclcpp::Time& now);
-    std::string get_error_string(uint32_t error_code);
+    rclcpp::Time timestamp_pub_;
     std::shared_ptr<SimplePublisher<osc_interfaces::msg::MotorsStates>> pub_;
-    double pub_timeout_s_;
+    double pub_period_s_;
 };
 
 enum connection_states {
@@ -122,6 +122,32 @@ struct Axis {
     }
 };
 
+const std::unordered_map<uint32_t, std::string> ODRIVE_ERROR_MAP = {
+    {ODRIVE_ERROR_NONE, "OK"},
+    {ODRIVE_ERROR_INITIALIZING, "Initializing"},
+    {ODRIVE_ERROR_SYSTEM_LEVEL, "System Level Error"},
+    {ODRIVE_ERROR_TIMING_ERROR, "Timing Error"},
+    {ODRIVE_ERROR_MISSING_ESTIMATE, "Missing Estimate"},
+    {ODRIVE_ERROR_BAD_CONFIG, "Bad Config"},
+    {ODRIVE_ERROR_DRV_FAULT, "DRV Fault"},
+    {ODRIVE_ERROR_MISSING_INPUT, "Missing Input"},
+    {ODRIVE_ERROR_DC_BUS_OVER_VOLTAGE, "DC Bus Over Voltage"},
+    {ODRIVE_ERROR_DC_BUS_UNDER_VOLTAGE, "DC Bus Under Voltage"},
+    {ODRIVE_ERROR_DC_BUS_OVER_CURRENT, "DC Bus Over Current"},
+    {ODRIVE_ERROR_DC_BUS_OVER_REGEN_CURRENT, "DC Bus Over Regen Current"},
+    {ODRIVE_ERROR_CURRENT_LIMIT_VIOLATION, "Current Limit Violation"},
+    {ODRIVE_ERROR_MOTOR_OVER_TEMP, "Motor Over Temperature"},
+    {ODRIVE_ERROR_INVERTER_OVER_TEMP, "Inverter Over Temperature"},
+    {ODRIVE_ERROR_VELOCITY_LIMIT_VIOLATION, "Velocity Limit Violation"},
+    {ODRIVE_ERROR_POSITION_LIMIT_VIOLATION, "Position Limit Violation"},
+    {ODRIVE_ERROR_WATCHDOG_TIMER_EXPIRED, "Watchdog Timer Expired"},
+    {ODRIVE_ERROR_ESTOP_REQUESTED, "E-Stop Requested"},
+    {ODRIVE_ERROR_SPINOUT_DETECTED, "Spinout Detected"},
+    {ODRIVE_ERROR_BRAKE_RESISTOR_DISARMED, "Brake Resistor Disarmed"},
+    {ODRIVE_ERROR_THERMISTOR_DISCONNECTED, "Thermistor Disconnected"},
+    {ODRIVE_ERROR_CALIBRATION_ERROR, "Calibration Error"}
+};
+
 } // namespace odrive_ros2_control
 
 using namespace odrive_ros2_control;
@@ -134,7 +160,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         return CallbackReturn::ERROR;
     }
 
-    pub_timeout_s_ = 1 / std::stod(info.hardware_parameters.at("motor_state_pub_rate_hz"));
+    pub_period_s_ = 1 / std::stod(info.hardware_parameters.at("motor_state_pub_rate_hz"));
     can_intf_name_ = info_.hardware_parameters["can"];
 
     for (auto& joint : info_.joints) {
@@ -176,6 +202,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
     }
 
     pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorsStates>>("odrive_hw", "odrive_state");
+    timestamp_pub_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
     return CallbackReturn::SUCCESS;
 }
 
@@ -316,7 +343,7 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
     while (can_intf_.read_nonblocking()) {
         // repeat until CAN interface has no more messages
     }
-    if ((timestamp_.seconds() - timestamp_pub_.seconds()) > pub_timeout_s_) {
+    if ((timestamp_.seconds() - timestamp_pub_.seconds()) > pub_period_s_) {
         osc_interfaces::msg::MotorsStates msg = generate_motors_states_msg(timestamp);
         pub_->publishData(msg);
         timestamp_pub_ = timestamp_;
@@ -432,7 +459,7 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
-            motor_msg.internal_motor_error = get_error_string(axis.error_code_);
+            motor_msg.internal_motor_error = ODRIVE_ERROR_MAP.at(axis.error_code_);
         } else {
             if (axis.pos_input_enabled_) {
                 motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
@@ -461,60 +488,6 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
     }
 
     return msg;
-}
-
-std::string ODriveHardwareInterface::get_error_string(uint32_t error_code) {
-    if (error_code == ODRIVE_ERROR_NONE) {
-        return "OK";
-    }
-
-    std::string error_message;
-    if (error_code & ODRIVE_ERROR_INITIALIZING)
-        error_message = "Initializing";
-    if (error_code & ODRIVE_ERROR_SYSTEM_LEVEL)
-        error_message = "System Level Error";
-    if (error_code & ODRIVE_ERROR_TIMING_ERROR)
-        error_message = "Timing Error";
-    if (error_code & ODRIVE_ERROR_MISSING_ESTIMATE)
-        error_message = "Missing Estimate";
-    if (error_code & ODRIVE_ERROR_BAD_CONFIG)
-        error_message = "Bad Config";
-    if (error_code & ODRIVE_ERROR_DRV_FAULT)
-        error_message = "DRV Fault";
-    if (error_code & ODRIVE_ERROR_MISSING_INPUT)
-        error_message = "Missing Input";
-    if (error_code & ODRIVE_ERROR_DC_BUS_OVER_VOLTAGE)
-        error_message = "DC Bus Over Voltage";
-    if (error_code & ODRIVE_ERROR_DC_BUS_UNDER_VOLTAGE)
-        error_message = "DC Bus Under Voltage";
-    if (error_code & ODRIVE_ERROR_DC_BUS_OVER_CURRENT)
-        error_message = "DC Bus Over Current";
-    if (error_code & ODRIVE_ERROR_DC_BUS_OVER_REGEN_CURRENT)
-        error_message = "DC Bus Over Regen Current";
-    if (error_code & ODRIVE_ERROR_CURRENT_LIMIT_VIOLATION)
-        error_message = "Current Limit Violation";
-    if (error_code & ODRIVE_ERROR_MOTOR_OVER_TEMP)
-        error_message = "Motor Over Temperature";
-    if (error_code & ODRIVE_ERROR_INVERTER_OVER_TEMP)
-        error_message = "Inverter Over Temperature";
-    if (error_code & ODRIVE_ERROR_VELOCITY_LIMIT_VIOLATION)
-        error_message = "Velocity Limit Violation";
-    if (error_code & ODRIVE_ERROR_POSITION_LIMIT_VIOLATION)
-        error_message = "Position Limit Violation";
-    if (error_code & ODRIVE_ERROR_WATCHDOG_TIMER_EXPIRED)
-        error_message = "Watchdog Timer Expired";
-    if (error_code & ODRIVE_ERROR_ESTOP_REQUESTED)
-        error_message = "E-Stop Requested";
-    if (error_code & ODRIVE_ERROR_SPINOUT_DETECTED)
-        error_message = "Spinout Detected";
-    if (error_code & ODRIVE_ERROR_BRAKE_RESISTOR_DISARMED)
-        error_message = "Brake Resistor Disarmed";
-    if (error_code & ODRIVE_ERROR_THERMISTOR_DISCONNECTED)
-        error_message = "Thermistor Disconnected";
-    if (error_code & ODRIVE_ERROR_CALIBRATION_ERROR)
-        error_message = "Calibration Error";
-
-    return error_message;
 }
 
 void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
