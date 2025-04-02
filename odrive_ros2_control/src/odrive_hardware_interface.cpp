@@ -100,6 +100,7 @@ struct Axis {
     bool torque_input_enabled_ = false;
 
     uint32_t error_code_ = ODRIVE_ERROR_NONE;
+    uint32_t procedure_result_ = PROCEDURE_RESULT_SUCCESS;
 
     rclcpp::Time timestamp_heartbeat_{rclcpp::Time(0, 0, RCL_ROS_TIME)};
 
@@ -138,6 +139,25 @@ const std::unordered_map<uint32_t, std::string> ODRIVE_ERROR_MAP = {
     {ODRIVE_ERROR_BRAKE_RESISTOR_DISARMED, "Brake Resistor Disarmed"},
     {ODRIVE_ERROR_THERMISTOR_DISCONNECTED, "Thermistor Disconnected"},
     {ODRIVE_ERROR_CALIBRATION_ERROR, "Calibration Error"}
+};
+
+const std::unordered_map<uint32_t, std::string> ODRIVE_PROCEDURE_RESULT_MAP = {
+    {PROCEDURE_RESULT_SUCCESS, "Success"},
+    {PROCEDURE_RESULT_BUSY, "Busy"},
+    {PROCEDURE_RESULT_CANCELLED, "Cancelled"},
+    {PROCEDURE_RESULT_DISARMED, "Disarmed"},
+    {PROCEDURE_RESULT_NO_RESPONSE, "No Response"},
+    {PROCEDURE_RESULT_POLE_PAIR_CPR_MISMATCH, "Pole Pair CPR Mismatch"},
+    {PROCEDURE_RESULT_PHASE_RESISTANCE_OUT_OF_RANGE, "Phase Resistance Out of Range"},
+    {PROCEDURE_RESULT_PHASE_INDUCTANCE_OUT_OF_RANGE, "Phase Inductance Out of Range"},
+    {PROCEDURE_RESULT_UNBALANCED_PHASES, "Unbalanced Phases"},
+    {PROCEDURE_RESULT_INVALID_MOTOR_TYPE, "Invalid Motor Type"},
+    {PROCEDURE_RESULT_ILLEGAL_HALL_STATE, "Illegal Hall State"},
+    {PROCEDURE_RESULT_TIMEOUT, "Timeout"},
+    {PROCEDURE_RESULT_HOMING_WITHOUT_ENDSTOP, "Homing Without Endstop"},
+    {PROCEDURE_RESULT_INVALID_STATE, "Invalid State"},
+    {PROCEDURE_RESULT_NOT_CALIBRATED, "Not Calibrated"},
+    {PROCEDURE_RESULT_NOT_CONVERGING, "Not Converging"}
 };
 
 } // namespace odrive_ros2_control
@@ -449,6 +469,12 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
             motor_msg.internal_error = ODRIVE_ERROR_MAP.at(axis.error_code_);
+        } else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS) {
+            motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_ERROR;
+            motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
+            motor_msg.command_setpoint = 0.0;
+            motor_msg.command_actual = 0.0;
+            motor_msg.internal_error = ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_);
         } else {
             if (axis.pos_input_enabled_) {
                 motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
@@ -523,6 +549,7 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
         case Heartbeat_msg_t::cmd_id: {
             if (Heartbeat_msg_t msg; try_decode(msg)) {
                 timestamp_heartbeat_ = timestamp;
+                procedure_result_ = msg.Procedure_Result;
             }
         } break;
             // silently ignore unimplemented command IDs
