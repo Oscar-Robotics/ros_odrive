@@ -428,11 +428,13 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
 
         if (axis.timestamp_heartbeat_ == rclcpp::Time(0, 0, RCL_ROS_TIME)) {
             motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_UNREACHABLE;
+            msg.data.push_back(motor_msg);
             continue;
         } else if (timestamp.seconds() - axis.timestamp_heartbeat_.seconds() > heartbeat_timeout_s_) {
             motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_COMMUNICATION_TIMEOUT;
             double timeout_delay = timestamp.seconds() - axis.timestamp_heartbeat_.seconds();
-            motor_msg.connection_error = std::to_string(timeout_delay) + "since last heartbeat";
+            motor_msg.connection_error = std::to_string(timeout_delay) + " since last heartbeat";
+            msg.data.push_back(motor_msg);
             continue;
         }
 
@@ -513,10 +515,14 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
                 motor_temperature_ = msg.Motor_Temperature;
             }
         } break;
+        case Get_Error_msg_t::cmd_id: {
+            if (Get_Error_msg_t msg; try_decode(msg)) {
+                error_code_ = msg.Active_Errors;
+            }
+        } break;
         case Heartbeat_msg_t::cmd_id: {
             if (Heartbeat_msg_t msg; try_decode(msg)) {
                 timestamp_heartbeat_ = timestamp;
-                error_code_ = msg.Axis_Error;
             }
         } break;
             // silently ignore unimplemented command IDs
