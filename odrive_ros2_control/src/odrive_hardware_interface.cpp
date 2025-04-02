@@ -11,7 +11,6 @@
 #include "rclcpp/rclcpp.hpp"
 #include "socket_can.hpp"
 
-
 namespace odrive_ros2_control {
 
 class Axis;
@@ -425,7 +424,6 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
 
     for (auto& axis : axes_) {
         osc_interfaces::msg::MotorState motor_msg;
-        
         motor_msg.uid = static_cast<uint8_t>(axis.node_id_);
 
         if (axis.timestamp_heartbeat_ == rclcpp::Time(0, 0, RCL_ROS_TIME)) {
@@ -433,6 +431,8 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             continue;
         } else if (timestamp.seconds() - axis.timestamp_heartbeat_.seconds() > heartbeat_timeout_s_) {
             motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_COMMUNICATION_TIMEOUT;
+            double timeout_delay = timestamp.seconds() - axis.timestamp_heartbeat_.seconds();
+            motor_msg.connection_error = std::to_string(timeout_delay) + "since last heartbeat";
             continue;
         }
 
@@ -440,14 +440,13 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
         motor_msg.bus_current_ma = axis.bus_current_ * 1000;
         motor_msg.computed_torque_nm = axis.torque_estimate_;
         motor_msg.temperature_c = axis.motor_temperature_;
-        
 
         if (axis.error_code_ != ODRIVE_ERROR_NONE) {
             motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
-            motor_msg.internal_motor_error = ODRIVE_ERROR_MAP.at(axis.error_code_);
+            motor_msg.internal_error = ODRIVE_ERROR_MAP.at(axis.error_code_);
         } else {
             if (axis.pos_input_enabled_) {
                 motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
