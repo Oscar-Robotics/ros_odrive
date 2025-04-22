@@ -475,30 +475,27 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
             motor_msg.internal_error = ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_);
+        } else if (axis.pos_input_enabled_) {
+            motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
+            motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_POSITION;
+            motor_msg.command_setpoint = axis.pos_setpoint_;
+            motor_msg.command_actual = axis.pos_estimate_;
+        } else if (axis.vel_input_enabled_) {
+            motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
+            motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_VELOCITY;
+            motor_msg.command_setpoint = axis.vel_setpoint_;
+            motor_msg.command_actual = axis.vel_estimate_;
+        } else if (axis.torque_input_enabled_) {
+            motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
+            motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_TORQUE;
+            motor_msg.command_setpoint = axis.torque_setpoint_;
+            motor_msg.command_actual = axis.torque_estimate_;
         } else {
-            if (axis.pos_input_enabled_) {
-                motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
-                motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_POSITION;
-                motor_msg.command_setpoint = axis.pos_setpoint_;
-                motor_msg.command_actual = axis.pos_estimate_;
-            } else if (axis.vel_input_enabled_) {
-                motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
-                motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_VELOCITY;
-                motor_msg.command_setpoint = axis.vel_setpoint_;
-                motor_msg.command_actual = axis.vel_estimate_;
-            } else if (axis.torque_input_enabled_) {
-                motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
-                motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_TORQUE;
-                motor_msg.command_setpoint = axis.torque_setpoint_;
-                motor_msg.command_actual = axis.torque_estimate_;
-            } else {
-                motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_IDLE;
-                motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
-                motor_msg.command_setpoint = 0.0;
-                motor_msg.command_actual = 0.0;
-            }
+            motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_IDLE;
+            motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
+            motor_msg.command_setpoint = 0.0;
+            motor_msg.command_actual = 0.0;
         }
-
         msg.data.push_back(motor_msg);
     }
 
