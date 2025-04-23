@@ -101,6 +101,7 @@ struct Axis {
 
     uint32_t error_code_ = ODRIVE_ERROR_NONE;
     uint32_t procedure_result_ = PROCEDURE_RESULT_SUCCESS;
+    uint32_t axis_state_ = AXIS_STATE_IDLE;
 
     rclcpp::Time timestamp_heartbeat_{rclcpp::Time(0, 0, RCL_ROS_TIME)};
 
@@ -158,6 +159,23 @@ const std::unordered_map<uint32_t, std::string> ODRIVE_PROCEDURE_RESULT_MAP = {
     {PROCEDURE_RESULT_INVALID_STATE, "Invalid State"},
     {PROCEDURE_RESULT_NOT_CALIBRATED, "Not Calibrated"},
     {PROCEDURE_RESULT_NOT_CONVERGING, "Not Converging"}
+};
+
+const std::unordered_map<uint32_t, std::string> ODRIVE_AXIS_STATE_MAP = {
+    {AXIS_STATE_UNDEFINED, "Undefined"},
+    {AXIS_STATE_IDLE, "Idle"},
+    {AXIS_STATE_STARTUP_SEQUENCE, "Startup Sequence"},
+    {AXIS_STATE_FULL_CALIBRATION_SEQUENCE, "Full Calibration Sequence"},
+    {AXIS_STATE_MOTOR_CALIBRATION, "Motor Calibration"},
+    {AXIS_STATE_ENCODER_INDEX_SEARCH, "Encoder Index Search"},
+    {AXIS_STATE_ENCODER_OFFSET_CALIBRATION, "Encoder Offset Calibration"},
+    {AXIS_STATE_CLOSED_LOOP_CONTROL, "Closed Loop Control"},
+    {AXIS_STATE_LOCKIN_SPIN, "Lockin Spin"},
+    {AXIS_STATE_ENCODER_DIR_FIND, "Encoder Direction Find"},
+    {AXIS_STATE_HOMING, "Homing"},
+    {AXIS_STATE_ENCODER_HALL_POLARITY_CALIBRATION, "Encoder Hall Polarity Calibration"},
+    {AXIS_STATE_ENCODER_HALL_PHASE_CALIBRATION, "Encoder Hall Phase Calibration"},
+    {AXIS_STATE_ANTICOGGING_CALIBRATION, "Anticogging Calibration"}
 };
 
 } // namespace odrive_ros2_control
@@ -265,21 +283,27 @@ std::vector<hardware_interface::StateInterface> ODriveHardwareInterface::export_
     std::vector<hardware_interface::StateInterface> state_interfaces;
 
     for (size_t i = 0; i < info_.joints.size(); i++) {
-        state_interfaces.emplace_back(hardware_interface::StateInterface(
-            info_.joints[i].name,
-            hardware_interface::HW_IF_EFFORT,
-            &axes_[i].torque_target_
-        ));
-        state_interfaces.emplace_back(hardware_interface::StateInterface(
-            info_.joints[i].name,
-            hardware_interface::HW_IF_VELOCITY,
-            &axes_[i].vel_estimate_
-        ));
-        state_interfaces.emplace_back(hardware_interface::StateInterface(
-            info_.joints[i].name,
-            hardware_interface::HW_IF_POSITION,
-            &axes_[i].pos_estimate_
-        ));
+        state_interfaces.emplace_back(
+            hardware_interface::StateInterface(
+                info_.joints[i].name,
+                hardware_interface::HW_IF_EFFORT,
+                &axes_[i].torque_target_
+            )
+        );
+        state_interfaces.emplace_back(
+            hardware_interface::StateInterface(
+                info_.joints[i].name,
+                hardware_interface::HW_IF_VELOCITY,
+                &axes_[i].vel_estimate_
+            )
+        );
+        state_interfaces.emplace_back(
+            hardware_interface::StateInterface(
+                info_.joints[i].name,
+                hardware_interface::HW_IF_POSITION,
+                &axes_[i].pos_estimate_
+            )
+        );
     }
 
     return state_interfaces;
@@ -289,21 +313,27 @@ std::vector<hardware_interface::CommandInterface> ODriveHardwareInterface::expor
     std::vector<hardware_interface::CommandInterface> command_interfaces;
 
     for (size_t i = 0; i < info_.joints.size(); i++) {
-        command_interfaces.emplace_back(hardware_interface::CommandInterface(
-            info_.joints[i].name,
-            hardware_interface::HW_IF_EFFORT,
-            &axes_[i].torque_setpoint_
-        ));
-        command_interfaces.emplace_back(hardware_interface::CommandInterface(
-            info_.joints[i].name,
-            hardware_interface::HW_IF_VELOCITY,
-            &axes_[i].vel_setpoint_
-        ));
-        command_interfaces.emplace_back(hardware_interface::CommandInterface(
-            info_.joints[i].name,
-            hardware_interface::HW_IF_POSITION,
-            &axes_[i].pos_setpoint_
-        ));
+        command_interfaces.emplace_back(
+            hardware_interface::CommandInterface(
+                info_.joints[i].name,
+                hardware_interface::HW_IF_EFFORT,
+                &axes_[i].torque_setpoint_
+            )
+        );
+        command_interfaces.emplace_back(
+            hardware_interface::CommandInterface(
+                info_.joints[i].name,
+                hardware_interface::HW_IF_VELOCITY,
+                &axes_[i].vel_setpoint_
+            )
+        );
+        command_interfaces.emplace_back(
+            hardware_interface::CommandInterface(
+                info_.joints[i].name,
+                hardware_interface::HW_IF_POSITION,
+                &axes_[i].pos_setpoint_
+            )
+        );
     }
 
     return command_interfaces;
@@ -453,7 +483,7 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
         } else if (timestamp.seconds() - axis.timestamp_heartbeat_.seconds() > heartbeat_timeout_s_) {
             motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_COMMUNICATION_TIMEOUT;
             double timeout_delay = timestamp.seconds() - axis.timestamp_heartbeat_.seconds();
-            motor_msg.connection_error = std::to_string(timeout_delay) + " since last heartbeat";
+            motor_msg.status_detail = std::to_string(timeout_delay) + " since last heartbeat";
             msg.data.push_back(motor_msg);
             continue;
         }
@@ -468,13 +498,19 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
-            motor_msg.internal_error = ODRIVE_ERROR_MAP.at(axis.error_code_);
+            motor_msg.status_detail = ODRIVE_ERROR_MAP.at(axis.error_code_);
         } else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS) {
             motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
-            motor_msg.internal_error = ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_);
+            motor_msg.status_detail = ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_);
+        } else if (axis.axis_state_ != AXIS_STATE_CLOSED_LOOP_CONTROL) {
+            motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_IDLE;
+            motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
+            motor_msg.command_setpoint = 0.0;
+            motor_msg.command_actual = 0.0;
+            motor_msg.status_detail = ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_);
         } else if (axis.pos_input_enabled_) {
             motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_RUNNING;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_POSITION;
@@ -490,11 +526,6 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_TORQUE;
             motor_msg.command_setpoint = axis.torque_setpoint_;
             motor_msg.command_actual = axis.torque_estimate_;
-        } else {
-            motor_msg.motor_status = osc_interfaces::msg::MotorState::STATUS_IDLE;
-            motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
-            motor_msg.command_setpoint = 0.0;
-            motor_msg.command_actual = 0.0;
         }
         msg.data.push_back(motor_msg);
     }
@@ -547,6 +578,7 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
             if (Heartbeat_msg_t msg; try_decode(msg)) {
                 timestamp_heartbeat_ = timestamp;
                 procedure_result_ = msg.Procedure_Result;
+                axis_state_ = msg.Axis_State;
             }
         } break;
             // silently ignore unimplemented command IDs
