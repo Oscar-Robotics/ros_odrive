@@ -13,6 +13,8 @@
 
   <depend>rclcpp</depend>
   <depend>hardware_interface</depend>
+  <depend>osc_interfaces</depend>
+  <depend>osc_utils</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
