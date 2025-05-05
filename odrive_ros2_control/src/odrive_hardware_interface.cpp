@@ -4,7 +4,7 @@
 #include "hardware_interface/system_interface.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "odrive_enums.h"
-#include "osc_interfaces/msg/error_report.hpp"
+#include "osc_interfaces/msg/device_status.hpp"
 #include "osc_interfaces/msg/motor_state.hpp"
 #include "osc_interfaces/msg/motors_states.hpp"
 #include "osc_utils/simple_publisher.hpp"
@@ -478,11 +478,11 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
         motor_msg.uid = static_cast<uint8_t>(axis.node_id_);
 
         if (axis.timestamp_heartbeat_ == rclcpp::Time(0, 0, RCL_ROS_TIME)) {
-            motor_msg.motor_status = osc_interfaces::msg::ErrorReport::STATUS_UNREACHABLE;
+            motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_UNREACHABLE;
             msg.data.push_back(motor_msg);
             continue;
         } else if (timestamp.seconds() - axis.timestamp_heartbeat_.seconds() > heartbeat_timeout_s_) {
-            motor_msg.motor_status = osc_interfaces::msg::ErrorReport::STATUS_COMMUNICATION_TIMEOUT;
+            motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_COMMUNICATION_TIMEOUT;
             double timeout_delay = timestamp.seconds() - axis.timestamp_heartbeat_.seconds();
             motor_msg.status_detail = std::to_string(timeout_delay) + " since last heartbeat";
             msg.data.push_back(motor_msg);
@@ -495,35 +495,35 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
         motor_msg.temperature_c = axis.motor_temperature_;
 
         if (axis.error_code_ != ODRIVE_ERROR_NONE) {
-            motor_msg.motor_status = osc_interfaces::msg::ErrorReport::STATUS_ERROR;
+            motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
             motor_msg.status_detail = ODRIVE_ERROR_MAP.at(axis.error_code_);
         } else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS) {
-            motor_msg.motor_status = osc_interfaces::msg::ErrorReport::STATUS_ERROR;
+            motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
             motor_msg.status_detail = ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_);
         } else if (axis.axis_state_ != AXIS_STATE_CLOSED_LOOP_CONTROL) {
-            motor_msg.motor_status = osc_interfaces::msg::ErrorReport::STATUS_IDLE;
+            motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_IDLE;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
             motor_msg.status_detail = ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_);
         } else if (axis.pos_input_enabled_) {
-            motor_msg.motor_status = osc_interfaces::msg::ErrorReport::STATUS_RUNNING;
+            motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_RUNNING;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_POSITION;
             motor_msg.command_setpoint = axis.pos_setpoint_;
             motor_msg.command_actual = axis.pos_estimate_;
         } else if (axis.vel_input_enabled_) {
-            motor_msg.motor_status = osc_interfaces::msg::ErrorReport::STATUS_RUNNING;
+            motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_RUNNING;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_VELOCITY;
             motor_msg.command_setpoint = axis.vel_setpoint_;
             motor_msg.command_actual = axis.vel_estimate_;
         } else if (axis.torque_input_enabled_) {
-            motor_msg.motor_status = osc_interfaces::msg::ErrorReport::STATUS_RUNNING;
+            motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_RUNNING;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_TORQUE;
             motor_msg.command_setpoint = axis.torque_setpoint_;
             motor_msg.command_actual = axis.torque_estimate_;
