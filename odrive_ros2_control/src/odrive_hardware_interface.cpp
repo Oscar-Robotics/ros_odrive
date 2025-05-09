@@ -499,13 +499,24 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
-            motor_msg.status_detail = ODRIVE_ERROR_MAP.at(axis.error_code_);
+            auto it = ODRIVE_ERROR_MAP.find(axis.error_code_);
+            if (it != ODRIVE_ERROR_MAP.end()) {
+                motor_msg.status_detail = it->second;
+            } else {
+                motor_msg.status_detail = "Unknown Error";
+            }
         } else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS) {
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
             motor_msg.status_detail = ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_);
+            auto it = ODRIVE_PROCEDURE_RESULT_MAP.find(axis.procedure_result_);
+            if (it != ODRIVE_PROCEDURE_RESULT_MAP.end()) {
+                motor_msg.status_detail = it->second;
+            } else {
+                motor_msg.status_detail = "Unknown State";
+            }
         } else if (axis.axis_state_ != AXIS_STATE_CLOSED_LOOP_CONTROL) {
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_IDLE;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
