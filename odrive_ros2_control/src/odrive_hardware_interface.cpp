@@ -43,6 +43,7 @@ private:
     void set_axis_command_mode(const Axis& axis);
     std::string get_error_string(uint32_t error_code);
     osc_interfaces::msg::MotorsStates generate_motors_states_msg(const rclcpp::Time& timestamp);
+    std::string decode(uint32_t code, const std::unordered_map<uint32_t, std::string>& map);
 
     bool active_;
     EpollEventLoop event_loop_;
@@ -499,30 +500,19 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
-            auto it = ODRIVE_ERROR_MAP.find(axis.error_code_);
-            if (it != ODRIVE_ERROR_MAP.end()) {
-                motor_msg.status_detail = it->second;
-            } else {
-                motor_msg.status_detail = "Unknown Error";
-            }
+            motor_msg.status_detail  = decode(axis.error_code_, ODRIVE_ERROR_MAP);
         } else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS) {
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
-            motor_msg.status_detail = ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_);
-            auto it = ODRIVE_PROCEDURE_RESULT_MAP.find(axis.procedure_result_);
-            if (it != ODRIVE_PROCEDURE_RESULT_MAP.end()) {
-                motor_msg.status_detail = it->second;
-            } else {
-                motor_msg.status_detail = "Unknown State";
-            }
+            motor_msg.status_detail = decode(axis.procedure_result_, ODRIVE_PROCEDURE_RESULT_MAP);
         } else if (axis.axis_state_ != AXIS_STATE_CLOSED_LOOP_CONTROL) {
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_IDLE;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
-            motor_msg.status_detail = ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_);
+            motor_msg.status_detail = decode(axis.axis_state_, ODRIVE_AXIS_STATE_MAP);
         } else if (axis.pos_input_enabled_) {
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_RUNNING;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_POSITION;
@@ -543,6 +533,26 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
     }
 
     return msg;
+}
+
+std::string ODriveHardwareInterface::decode(uint32_t code, const std::unordered_map<uint32_t, std::string>& map)
+{
+    std::string description;
+
+    for (const auto& pair : map)
+    {
+        if (code & pair.first)
+        {
+            description += pair.second + ", ";
+        }
+    }
+
+    if (!description.empty())
+    {
+        description.erase(description.length() - 2);
+    }
+
+    return description;
 }
 
 void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
