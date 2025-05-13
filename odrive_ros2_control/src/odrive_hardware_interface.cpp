@@ -43,6 +43,7 @@ private:
     void set_axis_command_mode(const Axis& axis);
     std::string get_error_string(uint32_t error_code);
     osc_interfaces::msg::MotorsStates generate_motors_states_msg(const rclcpp::Time& timestamp);
+    std::string decode_error(uint32_t code);
 
     bool active_;
     EpollEventLoop event_loop_;
@@ -499,7 +500,7 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
-            motor_msg.status_detail = ODRIVE_ERROR_MAP.at(axis.error_code_);
+            motor_msg.status_detail = decode_error(axis.error_code_);
         } else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS) {
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
@@ -532,6 +533,22 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
     }
 
     return msg;
+}
+
+std::string ODriveHardwareInterface::decode_error(uint32_t code) {
+    std::string error_description;
+
+    for (const auto& pair : ODRIVE_ERROR_MAP) {
+        if ((code & pair.first) == pair.first && pair.first != 0) {
+            error_description += pair.second + ", ";
+        }
+    }
+
+    if (!error_description.empty()) {
+        error_description.erase(error_description.length() - 2);
+    }
+
+    return error_description;
 }
 
 void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
