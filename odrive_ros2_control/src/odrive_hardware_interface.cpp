@@ -91,6 +91,7 @@ struct Axis {
     double bus_voltage_ = NAN;
     double bus_current_ = NAN;
     double direction_multiplier_ = 1.0;
+    double gear_ratio_ = 1.0;
 
     // Indicates which controller inputs are enabled. This is configured by the
     // controller that sits on top of this hardware interface. Multiple inputs
@@ -141,8 +142,7 @@ const std::unordered_map<uint32_t, std::string> ODRIVE_ERROR_MAP = {
     {ODRIVE_ERROR_SPINOUT_DETECTED, "Spinout Detected"},
     {ODRIVE_ERROR_BRAKE_RESISTOR_DISARMED, "Brake Resistor Disarmed"},
     {ODRIVE_ERROR_THERMISTOR_DISCONNECTED, "Thermistor Disconnected"},
-    {ODRIVE_ERROR_CALIBRATION_ERROR, "Calibration Error"}
-};
+    {ODRIVE_ERROR_CALIBRATION_ERROR, "Calibration Error"}};
 
 const std::unordered_map<uint32_t, std::string> ODRIVE_PROCEDURE_RESULT_MAP = {
     {PROCEDURE_RESULT_SUCCESS, "Success"},
@@ -160,8 +160,7 @@ const std::unordered_map<uint32_t, std::string> ODRIVE_PROCEDURE_RESULT_MAP = {
     {PROCEDURE_RESULT_HOMING_WITHOUT_ENDSTOP, "Homing Without Endstop"},
     {PROCEDURE_RESULT_INVALID_STATE, "Invalid State"},
     {PROCEDURE_RESULT_NOT_CALIBRATED, "Not Calibrated"},
-    {PROCEDURE_RESULT_NOT_CONVERGING, "Not Converging"}
-};
+    {PROCEDURE_RESULT_NOT_CONVERGING, "Not Converging"}};
 
 const std::unordered_map<uint32_t, std::string> ODRIVE_AXIS_STATE_MAP = {
     {AXIS_STATE_UNDEFINED, "Undefined"},
@@ -177,8 +176,7 @@ const std::unordered_map<uint32_t, std::string> ODRIVE_AXIS_STATE_MAP = {
     {AXIS_STATE_HOMING, "Homing"},
     {AXIS_STATE_ENCODER_HALL_POLARITY_CALIBRATION, "Encoder Hall Polarity Calibration"},
     {AXIS_STATE_ENCODER_HALL_PHASE_CALIBRATION, "Encoder Hall Phase Calibration"},
-    {AXIS_STATE_ANTICOGGING_CALIBRATION, "Anticogging Calibration"}
-};
+    {AXIS_STATE_ANTICOGGING_CALIBRATION, "Anticogging Calibration"}};
 
 } // namespace odrive_ros2_control
 
@@ -209,7 +207,6 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         }
 
         auto& axis = axes_.back();
-
         auto rotation_param_it = joint.parameters.find("inverse_rotation");
         if (rotation_param_it != joint.parameters.end()) {
             const auto& rotation_param = rotation_param_it->second;
@@ -229,6 +226,26 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         } else {
             // Default value if inverse_rotation is not specified
             axis.direction_multiplier_ = 1.0;
+        }
+
+        auto gear_ratio_param_it = info.hardware_parameters.find("gear_ratio");
+        if (gear_ratio_param_it != info.hardware_parameters.end()) {
+            double gear_ratio = std::stod(gear_ratio_param_it->second);
+            if (gear_ratio <= 0.0) {
+                RCLCPP_ERROR(
+                    rclcpp::get_logger("ODriveHardwareInterface"),
+                    "Invalid 'gear_ratio' parameter value : %f. Expected a value greater than 0.0.",
+                    gear_ratio
+                );
+            } else {
+                axis.gear_ratio_ = gear_ratio;
+                RCLCPP_INFO(
+                    rclcpp::get_logger("ODriveHardwareInterface"),
+                    "Gear ratio for '%s': %f.",
+                    joint.name.c_str(),
+                    axis.gear_ratio_
+                );
+            }
         }
     }
 
@@ -285,27 +302,21 @@ std::vector<hardware_interface::StateInterface> ODriveHardwareInterface::export_
     std::vector<hardware_interface::StateInterface> state_interfaces;
 
     for (size_t i = 0; i < info_.joints.size(); i++) {
-        state_interfaces.emplace_back(
-            hardware_interface::StateInterface(
-                info_.joints[i].name,
-                hardware_interface::HW_IF_EFFORT,
-                &axes_[i].torque_target_
-            )
-        );
-        state_interfaces.emplace_back(
-            hardware_interface::StateInterface(
-                info_.joints[i].name,
-                hardware_interface::HW_IF_VELOCITY,
-                &axes_[i].vel_estimate_
-            )
-        );
-        state_interfaces.emplace_back(
-            hardware_interface::StateInterface(
-                info_.joints[i].name,
-                hardware_interface::HW_IF_POSITION,
-                &axes_[i].pos_estimate_
-            )
-        );
+        state_interfaces.emplace_back(hardware_interface::StateInterface(
+            info_.joints[i].name,
+            hardware_interface::HW_IF_EFFORT,
+            &axes_[i].torque_target_
+        ));
+        state_interfaces.emplace_back(hardware_interface::StateInterface(
+            info_.joints[i].name,
+            hardware_interface::HW_IF_VELOCITY,
+            &axes_[i].vel_estimate_
+        ));
+        state_interfaces.emplace_back(hardware_interface::StateInterface(
+            info_.joints[i].name,
+            hardware_interface::HW_IF_POSITION,
+            &axes_[i].pos_estimate_
+        ));
     }
 
     return state_interfaces;
@@ -315,27 +326,21 @@ std::vector<hardware_interface::CommandInterface> ODriveHardwareInterface::expor
     std::vector<hardware_interface::CommandInterface> command_interfaces;
 
     for (size_t i = 0; i < info_.joints.size(); i++) {
-        command_interfaces.emplace_back(
-            hardware_interface::CommandInterface(
-                info_.joints[i].name,
-                hardware_interface::HW_IF_EFFORT,
-                &axes_[i].torque_setpoint_
-            )
-        );
-        command_interfaces.emplace_back(
-            hardware_interface::CommandInterface(
-                info_.joints[i].name,
-                hardware_interface::HW_IF_VELOCITY,
-                &axes_[i].vel_setpoint_
-            )
-        );
-        command_interfaces.emplace_back(
-            hardware_interface::CommandInterface(
-                info_.joints[i].name,
-                hardware_interface::HW_IF_POSITION,
-                &axes_[i].pos_setpoint_
-            )
-        );
+        command_interfaces.emplace_back(hardware_interface::CommandInterface(
+            info_.joints[i].name,
+            hardware_interface::HW_IF_EFFORT,
+            &axes_[i].torque_setpoint_
+        ));
+        command_interfaces.emplace_back(hardware_interface::CommandInterface(
+            info_.joints[i].name,
+            hardware_interface::HW_IF_VELOCITY,
+            &axes_[i].vel_setpoint_
+        ));
+        command_interfaces.emplace_back(hardware_interface::CommandInterface(
+            info_.joints[i].name,
+            hardware_interface::HW_IF_POSITION,
+            &axes_[i].pos_setpoint_
+        ));
     }
 
     return command_interfaces;
@@ -350,8 +355,7 @@ return_type ODriveHardwareInterface::perform_command_mode_switch(
         std::array<std::pair<std::string, bool*>, 3> interfaces = {
             {{info_.joints[i].name + "/" + hardware_interface::HW_IF_POSITION, &axis.pos_input_enabled_},
              {info_.joints[i].name + "/" + hardware_interface::HW_IF_VELOCITY, &axis.vel_input_enabled_},
-             {info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT, &axis.torque_input_enabled_}}
-        };
+             {info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT, &axis.torque_input_enabled_}}};
 
         bool mode_switch = false;
 
@@ -400,20 +404,24 @@ return_type ODriveHardwareInterface::write(const rclcpp::Time&, const rclcpp::Du
         // Send the CAN message that fits the set of enabled setpoints
         if (axis.pos_input_enabled_) {
             Set_Input_Pos_msg_t msg;
-            msg.Input_Pos = axis.direction_multiplier_ * axis.pos_setpoint_ / (2 * M_PI);
-            msg.Vel_FF = axis.vel_input_enabled_ ? (axis.direction_multiplier_ * axis.vel_setpoint_ / (2 * M_PI))
-                                                 : 0.0f;
-            msg.Torque_FF = axis.torque_input_enabled_ ? (axis.direction_multiplier_ * axis.torque_setpoint_) : 0.0f;
+            msg.Input_Pos = axis.gear_ratio_ * axis.direction_multiplier_ * axis.pos_setpoint_ / (2 * M_PI);
+            msg.Vel_FF = axis.vel_input_enabled_
+                           ? (axis.gear_ratio_ * axis.direction_multiplier_ * axis.vel_setpoint_ / (2 * M_PI))
+                           : 0.0f;
+            msg.Torque_FF = axis.torque_input_enabled_
+                              ? (axis.gear_ratio_ * axis.direction_multiplier_ * axis.torque_setpoint_)
+                              : 0.0f;
             axis.send(msg);
         } else if (axis.vel_input_enabled_) {
             Set_Input_Vel_msg_t msg;
-            msg.Input_Vel = axis.direction_multiplier_ * axis.vel_setpoint_ / (2 * M_PI);
-            msg.Input_Torque_FF = axis.torque_input_enabled_ ? (axis.direction_multiplier_ * axis.torque_setpoint_)
-                                                             : 0.0f;
+            msg.Input_Vel = axis.gear_ratio_ * axis.direction_multiplier_ * axis.vel_setpoint_ / (2 * M_PI);
+            msg.Input_Torque_FF = axis.torque_input_enabled_
+                                    ? (axis.gear_ratio_ * axis.direction_multiplier_ * axis.torque_setpoint_)
+                                    : 0.0f;
             axis.send(msg);
         } else if (axis.torque_input_enabled_) {
             Set_Input_Torque_msg_t msg;
-            msg.Input_Torque = axis.torque_setpoint_;
+            msg.Input_Torque = axis.gear_ratio_ * axis.torque_setpoint_;
             axis.send(msg);
         } else {
             // no control enabled - don't send any setpoint
@@ -566,14 +574,14 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
     switch (cmd) {
         case Get_Encoder_Estimates_msg_t::cmd_id: {
             if (Get_Encoder_Estimates_msg_t msg; try_decode(msg)) {
-                pos_estimate_ = msg.Pos_Estimate * (2 * M_PI) * direction_multiplier_;
-                vel_estimate_ = msg.Vel_Estimate * (2 * M_PI) * direction_multiplier_;
+                pos_estimate_ = (msg.Pos_Estimate * (2 * M_PI) * direction_multiplier_) / gear_ratio_;
+                vel_estimate_ = (msg.Vel_Estimate * (2 * M_PI) * direction_multiplier_) / gear_ratio_;
             }
         } break;
         case Get_Torques_msg_t::cmd_id: {
             if (Get_Torques_msg_t msg; try_decode(msg)) {
-                torque_target_ = msg.Torque_Target * direction_multiplier_;
-                torque_estimate_ = msg.Torque_Estimate * direction_multiplier_;
+                torque_target_ = (msg.Torque_Target * direction_multiplier_) / gear_ratio_ ;
+                torque_estimate_ = (msg.Torque_Estimate * direction_multiplier_) / gear_ratio_;
             }
         } break;
         case Get_Bus_Voltage_Current_msg_t::cmd_id: {
