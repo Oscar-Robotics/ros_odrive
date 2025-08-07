@@ -249,7 +249,9 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         }
     }
 
-    pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorsStates>>("odrive_hw", "odrive_state");
+    pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorsStates>>(
+        "odrive_hw", 
+        info_.hardware_parameters.at("motor_state_topic"));
     heartbeat_timeout_s_ = std::stod(info.hardware_parameters.at("heartbeat_timeout_period_s"));
     timestamp_pub_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
     return CallbackReturn::SUCCESS;
