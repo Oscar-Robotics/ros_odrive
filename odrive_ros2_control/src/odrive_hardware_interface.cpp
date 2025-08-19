@@ -534,7 +534,8 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             }
         }
 
-        else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS || PROCEDURE_RESULT_BUSY) {
+        else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS &&
+                axis.procedure_result_ != PROCEDURE_RESULT_BUSY) {
             // Procedure result indicates an error
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
