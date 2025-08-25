@@ -1,15 +1,16 @@
 #include "socket_can.hpp"
-#include <unistd.h>
+
+#include <cerrno>
 #include <cstring>
 #include <iostream>
-#include <sys/socket.h>
-#include <sys/uio.h>
-#include <sys/types.h>
 #include <linux/can.h>
 #include <linux/can/raw.h>
-#include <cerrno>
 #include <net/if.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/uio.h>
+#include <unistd.h>
 
 bool SocketCanIntf::init(const std::string& interface, EpollEventLoop* event_loop, FrameProcessor frame_processor) {
     interface_ = interface;
@@ -46,8 +47,7 @@ bool SocketCanIntf::init(const std::string& interface, EpollEventLoop* event_loo
         .msg_iovlen = 0,
         .msg_control = nullptr,
         .msg_controllen = 0,
-        .msg_flags = 0
-    };
+        .msg_flags = 0};
 
     int retcode = recvmsg(socket_id_, &message, 0);
     if (retcode < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -56,7 +56,9 @@ bool SocketCanIntf::init(const std::string& interface, EpollEventLoop* event_loo
         return false;
     }
 
-    if (!event_loop_->register_event(&socket_evt_id_, socket_id_, EPOLLIN, [this](uint32_t mask) { on_socket_event(mask); })) {
+    if (!event_loop_->register_event(&socket_evt_id_, socket_id_, EPOLLIN, [this](uint32_t mask) {
+            on_socket_event(mask);
+        })) {
         std::cerr << "Failed to register socket with event loop" << std::endl;
         close(socket_id_);
         socket_id_ = 0;
@@ -77,7 +79,8 @@ void SocketCanIntf::deinit() {
 bool SocketCanIntf::send_can_frame(const can_frame& frame) {
     ssize_t nbytes = write(socket_id_, &frame, sizeof(frame));
     if (nbytes == -1) {
-        std::cerr << "Failed to send CAN frame" << strerror(errno) << std::endl;
+        std::cerr << "Failed to send CAN frame " << strerror(errno) << " 0x" << std::hex << frame.can_id << std::dec
+                  << std::endl;
         return false;
     }
 
@@ -86,7 +89,8 @@ bool SocketCanIntf::send_can_frame(const can_frame& frame) {
 
 void SocketCanIntf::on_socket_event(uint32_t mask) {
     if (mask & EPOLLIN) {
-        while (read_nonblocking() && !broken_);
+        while (read_nonblocking() && !broken_)
+            ;
     }
     if (mask & EPOLLERR) {
         std::cerr << "interface disappeared" << std::endl;
@@ -109,12 +113,11 @@ bool SocketCanIntf::read_nonblocking() {
     struct msghdr message = {
         .msg_name = nullptr,
         .msg_namelen = 0,
-        .msg_iov = &vec, 
+        .msg_iov = &vec,
         .msg_iovlen = 1,
         .msg_control = &ctrlmsg,
         .msg_controllen = sizeof(ctrlmsg),
-        .msg_flags = 0
-        };
+        .msg_flags = 0};
 
     ssize_t n_received = recvmsg(socket_id_, &message, MSG_DONTWAIT);
     if (n_received < 0) {
