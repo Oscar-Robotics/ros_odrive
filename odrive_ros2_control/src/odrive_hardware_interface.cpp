@@ -250,8 +250,9 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
     }
 
     pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorsStates>>(
-        "odrive_hw", 
-        info_.hardware_parameters.at("motor_state_topic"));
+        "odrive_hw",
+        info_.hardware_parameters.at("motor_state_topic")
+    );
     heartbeat_timeout_s_ = std::stod(info.hardware_parameters.at("heartbeat_timeout_period_s"));
     timestamp_pub_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
     return CallbackReturn::SUCCESS;
@@ -397,6 +398,12 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
         osc_interfaces::msg::MotorsStates msg = generate_motors_states_msg(timestamp);
         pub_->publishData(msg);
         timestamp_pub_ = timestamp_;
+        if (std::any_of(axes_.begin(), axes_.end(), [](const Axis& axis) {
+                return axis.axis_state_ == AXIS_STATE_IDLE;
+            })) {
+            RCLCPP_WARN(rclcpp::get_logger("ODriveHardwareInterface"), "At least one axis is idle, triggering reset.");
+            on_activate(State());
+        }
     }
     return return_type::OK;
 }
@@ -518,10 +525,9 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
             motor_msg.status_detail = decode_error(axis.error_code_);
-        } 
+        }
 
-        else if (axis.procedure_result_ == PROCEDURE_RESULT_BUSY && 
-                axis.axis_state_ == AXIS_STATE_CLOSED_LOOP_CONTROL) {
+        else if (axis.procedure_result_ == PROCEDURE_RESULT_BUSY && axis.axis_state_ == AXIS_STATE_CLOSED_LOOP_CONTROL) {
             // Axis is running in closed loop control
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_RUNNING;
             motor_msg.status_detail = ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_);
@@ -540,19 +546,18 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             }
         }
 
-        else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS &&
-                axis.procedure_result_ != PROCEDURE_RESULT_BUSY) {
+        else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS && axis.procedure_result_ != PROCEDURE_RESULT_BUSY) {
             // Procedure result indicates an error
             RCLCPP_ERROR(
                 rclcpp::get_logger("ODriveHardwareInterface"),
                 "Axis %d, state: %s, procedure result: %s",
                 axis.node_id_,
                 (ODRIVE_AXIS_STATE_MAP.find(axis.axis_state_) != ODRIVE_AXIS_STATE_MAP.end()
-                    ? ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_).c_str()
-                    : "Unknown state"),
+                     ? ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_).c_str()
+                     : "Unknown state"),
                 (ODRIVE_PROCEDURE_RESULT_MAP.find(axis.procedure_result_) != ODRIVE_PROCEDURE_RESULT_MAP.end()
-                    ? ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_).c_str()
-                    : "Unknown procedure result")
+                     ? ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_).c_str()
+                     : "Unknown procedure result")
             );
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
@@ -610,7 +615,7 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
         } break;
         case Get_Torques_msg_t::cmd_id: {
             if (Get_Torques_msg_t msg; try_decode(msg)) {
-                torque_target_ = (msg.Torque_Target * direction_multiplier_) / gear_ratio_ ;
+                torque_target_ = (msg.Torque_Target * direction_multiplier_) / gear_ratio_;
                 torque_estimate_ = (msg.Torque_Estimate * direction_multiplier_) / gear_ratio_;
             }
         } break;
