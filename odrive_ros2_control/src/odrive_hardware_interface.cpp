@@ -507,6 +507,12 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
 
         if (axis.error_code_ != ODRIVE_ERROR_NONE) {
             // Error state
+            RCLCPP_ERROR(
+                rclcpp::get_logger("ODriveHardwareInterface"),
+                "Axis %d error: %s",
+                axis.node_id_,
+                decode_error(axis.error_code_).c_str()
+            );
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
@@ -537,6 +543,17 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
         else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS &&
                 axis.procedure_result_ != PROCEDURE_RESULT_BUSY) {
             // Procedure result indicates an error
+            RCLCPP_ERROR(
+                rclcpp::get_logger("ODriveHardwareInterface"),
+                "Axis %d, state: %s, procedure result: %s",
+                axis.node_id_,
+                (ODRIVE_AXIS_STATE_MAP.find(axis.axis_state_) != ODRIVE_AXIS_STATE_MAP.end()
+                    ? ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_).c_str()
+                    : "Unknown state"),
+                (ODRIVE_PROCEDURE_RESULT_MAP.find(axis.procedure_result_) != ODRIVE_PROCEDURE_RESULT_MAP.end()
+                    ? ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_).c_str()
+                    : "Unknown procedure result")
+            );
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
