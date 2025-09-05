@@ -42,6 +42,7 @@ private:
     void on_can_msg(const can_frame& frame);
     void set_axis_command_mode(const Axis& axis);
     std::string get_error_string(uint32_t error_code);
+    void reset_if_idle();
     osc_interfaces::msg::MotorsStates generate_motors_states_msg(const rclcpp::Time& timestamp);
     std::string decode_error(uint32_t code);
 
@@ -390,7 +391,6 @@ return_type ODriveHardwareInterface::perform_command_mode_switch(
 
 return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const rclcpp::Duration&) {
     timestamp_ = timestamp;
-    static bool has_triggered_reset = false;
 
     while (can_intf_.read_nonblocking()) {
         // repeat until CAN interface has no more messages
@@ -399,16 +399,7 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
         osc_interfaces::msg::MotorsStates msg = generate_motors_states_msg(timestamp);
         pub_->publishData(msg);
         timestamp_pub_ = timestamp_;
-        if (std::any_of(axes_.begin(), axes_.end(), [](const Axis& axis) {
-                return axis.axis_state_ == AXIS_STATE_IDLE;
-            })) {
-            RCLCPP_WARN(rclcpp::get_logger("ODriveHardwareInterface"), "At least one axis is idle, triggering reset.");
-            on_activate(State());
-            has_triggered_reset = true;
-        }
-        else {
-            has_triggered_reset = false;
-        }
+        reset_if_idle();
     }
     return return_type::OK;
 }
@@ -489,6 +480,24 @@ void ODriveHardwareInterface::set_axis_command_mode(const Axis& axis) {
     axis.send(control_msg);
     axis.send(clear_error_msg);
     axis.send(state_msg);
+}
+
+void ODriveHardwareInterface::reset_if_idle() {
+    static bool has_triggered_reset = false;
+    bool has_idle_state = std::any_of(axes_.begin(), axes_.end(), [](const Axis& axis) {
+        return axis.axis_state_ == AXIS_STATE_IDLE;
+    });
+    bool control_mode_set = std::all_of(axes_.begin(), axes_.end(), [](const Axis& axis) {
+        return axis.pos_input_enabled_ || axis.vel_input_enabled_ || axis.torque_input_enabled_;
+    });
+    if (has_idle_state && control_mode_set && !has_triggered_reset) {
+        RCLCPP_WARN(rclcpp::get_logger("ODriveHardwareInterface"), "At least one axis is idle, triggering reset.");
+        on_activate(State());
+        has_triggered_reset = true;
+    }
+    else if (!has_idle_state && has_triggered_reset) {
+        has_triggered_reset = false;
+    }
 }
 
 osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_states_msg(const rclcpp::Time& timestamp) {
