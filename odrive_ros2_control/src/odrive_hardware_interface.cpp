@@ -390,6 +390,7 @@ return_type ODriveHardwareInterface::perform_command_mode_switch(
 
 return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const rclcpp::Duration&) {
     timestamp_ = timestamp;
+    static bool has_triggered_reset = false;
 
     while (can_intf_.read_nonblocking()) {
         // repeat until CAN interface has no more messages
@@ -403,6 +404,10 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
             })) {
             RCLCPP_WARN(rclcpp::get_logger("ODriveHardwareInterface"), "At least one axis is idle, triggering reset.");
             on_activate(State());
+            has_triggered_reset = true;
+        }
+        else {
+            has_triggered_reset = false;
         }
     }
     return return_type::OK;
