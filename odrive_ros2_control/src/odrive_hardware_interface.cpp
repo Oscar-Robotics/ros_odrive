@@ -251,7 +251,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
     }
 
     pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorsStates>>(
-        "odrive_hw", 
+        "odrive_hw",
         info_.hardware_parameters.at("motor_state_topic")
     );
     heartbeat_timeout_s_ = std::stod(info.hardware_parameters.at("heartbeat_timeout_period_s"));
@@ -503,6 +503,7 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
     osc_interfaces::msg::MotorsStates msg;
     msg.header.stamp = timestamp;
     msg.motors_type = "Odrive hardware";
+    static rclcpp::Time last_error_timestamp = rclcpp::Time(0, 0, RCL_ROS_TIME);
 
     for (auto& axis : axes_) {
         osc_interfaces::msg::MotorState motor_msg;
@@ -527,15 +528,23 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
 
         if (axis.error_code_ != ODRIVE_ERROR_NONE) {
             // Error state
+            if (timestamp.seconds() - last_error_timestamp.seconds() > 10 * pub_period_s_) {
+                last_error_timestamp = timestamp;
+                RCLCPP_ERROR(
+                    rclcpp::get_logger("ODriveHardwareInterface"),
+                    "Axis %d error: %s",
+                    axis.node_id_,
+                    decode_error(axis.error_code_).c_str()
+                );
+            }
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
             motor_msg.status_detail = decode_error(axis.error_code_);
-        } 
+        }
 
-        else if (axis.procedure_result_ == PROCEDURE_RESULT_BUSY && 
-                axis.axis_state_ == AXIS_STATE_CLOSED_LOOP_CONTROL) {
+        else if (axis.procedure_result_ == PROCEDURE_RESULT_BUSY && axis.axis_state_ == AXIS_STATE_CLOSED_LOOP_CONTROL) {
             // Axis is running in closed loop control
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_RUNNING;
             motor_msg.status_detail = ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_);
@@ -554,9 +563,22 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             }
         }
 
-        else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS &&
-                axis.procedure_result_ != PROCEDURE_RESULT_BUSY) {
+        else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS && axis.procedure_result_ != PROCEDURE_RESULT_BUSY) {
             // Procedure result indicates an error
+            if (timestamp.seconds() - last_error_timestamp.seconds() > 10 * pub_period_s_) {
+                RCLCPP_ERROR(
+                    rclcpp::get_logger("ODriveHardwareInterface"),
+                    "Axis %d, state: %s, procedure result: %s",
+                    axis.node_id_,
+                    (ODRIVE_AXIS_STATE_MAP.find(axis.axis_state_) != ODRIVE_AXIS_STATE_MAP.end()
+                         ? ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_).c_str()
+                         : "Unknown state"),
+                    (ODRIVE_PROCEDURE_RESULT_MAP.find(axis.procedure_result_) != ODRIVE_PROCEDURE_RESULT_MAP.end()
+                         ? ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_).c_str()
+                         : "Unknown procedure result")
+                );
+            }
+
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
             motor_msg.command_setpoint = 0.0;
@@ -571,6 +593,14 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             motor_msg.status_detail = ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_);
         }
         msg.data.push_back(motor_msg);
+    }
+
+    // If any motor has error state and we printed (period met), update last_error_timestamp
+    if ((timestamp.seconds() - last_error_timestamp.seconds() > 10 * pub_period_s_) &&
+        std::any_of(msg.data.begin(), msg.data.end(), [](const osc_interfaces::msg::MotorState& motor_msg) {
+            return motor_msg.motor_status == osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
+        })) {
+        last_error_timestamp = timestamp;
     }
 
     return msg;
