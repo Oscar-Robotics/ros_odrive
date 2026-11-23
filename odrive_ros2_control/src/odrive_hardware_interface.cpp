@@ -1,6 +1,9 @@
 
 #include "can_helpers.hpp"
 #include "can_simple_messages.hpp"
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
+#include "diagnostic_msgs/msg/diagnostic_status.hpp"
+#include "diagnostic_msgs/msg/key_value.hpp"
 #include "hardware_interface/system_interface.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "odrive_enums.h"
@@ -43,6 +46,7 @@ private:
     void set_axis_command_mode(const Axis& axis);
     std::string get_error_string(uint32_t error_code);
     osc_interfaces::msg::MotorsStates generate_motors_states_msg(const rclcpp::Time& timestamp);
+    diagnostic_msgs::msg::DiagnosticArray generate_diagnostics_msg(const rclcpp::Time& timestamp);
     std::string decode_error(uint32_t code);
 
     bool active_;
@@ -53,12 +57,16 @@ private:
     rclcpp::Time timestamp_;
     rclcpp::Time timestamp_pub_;
     std::shared_ptr<SimplePublisher<osc_interfaces::msg::MotorsStates>> pub_;
+    std::shared_ptr<SimplePublisher<diagnostic_msgs::msg::DiagnosticArray>> diag_pub_;
+    bool enable_motors_states_pub_ = true;
+    bool enable_diagnostics_pub_ = true;
     double pub_period_s_;
     double heartbeat_timeout_s_;
 };
 
 struct Axis {
-    Axis(SocketCanIntf* can_intf, uint32_t node_id) : can_intf_(can_intf), node_id_(node_id) {}
+    Axis(SocketCanIntf* can_intf, uint32_t node_id, const std::string& joint_name = "")
+        : can_intf_(can_intf), node_id_(node_id), joint_name_(joint_name) {}
 
     void on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame);
 
@@ -66,6 +74,7 @@ struct Axis {
 
     SocketCanIntf* can_intf_;
     uint32_t node_id_;
+    std::string joint_name_;
 
     // Commands (ros2_control => ODrives)
     double pos_setpoint_ = 0.0f; // [rad]
@@ -195,7 +204,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
 
     for (auto& joint : info_.joints) {
         try {
-            axes_.emplace_back(&can_intf_, std::stoi(joint.parameters.at("node_id")));
+            axes_.emplace_back(&can_intf_, std::stoi(joint.parameters.at("node_id")), joint.name);
         } catch (const std::exception& e) {
             RCLCPP_ERROR(
                 rclcpp::get_logger("ODriveHardwareInterface"),
@@ -249,9 +258,17 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         }
     }
 
-    pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorsStates>>(
-        "odrive_hw", 
-        info_.hardware_parameters.at("motor_state_topic"));
+    auto get_bool_param = [this](const std::string& key, bool default_val = true) {
+        auto it = info_.hardware_parameters.find(key);
+        return it != info_.hardware_parameters.end() ? (it->second == "true" || it->second == "True") : default_val;
+    };
+
+    if ((enable_motors_states_pub_ = get_bool_param("enable_motors_states_pub"))) {
+        pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorsStates>>("odrive_hw", info_.hardware_parameters.at("motor_state_topic"));
+    }
+    if ((enable_diagnostics_pub_ = get_bool_param("enable_diagnostics_pub"))) {
+        diag_pub_ = std::make_shared<SimplePublisher<diagnostic_msgs::msg::DiagnosticArray>>("odrive_diagnostics", "/diagnostics");
+    }
     heartbeat_timeout_s_ = std::stod(info.hardware_parameters.at("heartbeat_timeout_period_s"));
     timestamp_pub_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
     return CallbackReturn::SUCCESS;
@@ -394,8 +411,16 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
         // repeat until CAN interface has no more messages
     }
     if ((timestamp_.seconds() - timestamp_pub_.seconds()) > pub_period_s_) {
-        osc_interfaces::msg::MotorsStates msg = generate_motors_states_msg(timestamp);
-        pub_->publishData(msg);
+        if (enable_motors_states_pub_ && pub_) {
+            osc_interfaces::msg::MotorsStates msg = generate_motors_states_msg(timestamp);
+            pub_->publishData(msg);
+        }
+
+        if (enable_diagnostics_pub_ && diag_pub_) {
+            diagnostic_msgs::msg::DiagnosticArray diag_msg = generate_diagnostics_msg(timestamp);
+            diag_pub_->publishData(diag_msg);
+        }
+
         timestamp_pub_ = timestamp_;
     }
     return return_type::OK;
@@ -554,6 +579,72 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
     }
 
     return msg;
+}
+
+diagnostic_msgs::msg::DiagnosticArray ODriveHardwareInterface::generate_diagnostics_msg(const rclcpp::Time& timestamp) {
+    diagnostic_msgs::msg::DiagnosticArray array_msg;
+    array_msg.header.stamp = timestamp;
+
+    for (auto& axis : axes_) {
+        diagnostic_msgs::msg::DiagnosticStatus status;
+        std::string component_name = axis.joint_name_.empty() 
+            ? ("ODrive Axis " + std::to_string(axis.node_id_)) 
+            : axis.joint_name_;
+        status.name = component_name;
+        status.hardware_id = "odrive_can_node_" + std::to_string(axis.node_id_);
+
+        if (axis.timestamp_heartbeat_ == rclcpp::Time(0, 0, RCL_ROS_TIME)) {
+            status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+            status.message = "Unreachable (No heartbeat received)";
+        } else {
+            double heartbeat_age = timestamp.seconds() - axis.timestamp_heartbeat_.seconds();
+            if (heartbeat_age > heartbeat_timeout_s_) {
+                status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+                status.message = "Communication timeout (" + std::to_string(heartbeat_age) + "s since last heartbeat)";
+            } else if (axis.error_code_ != ODRIVE_ERROR_NONE) {
+                status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+                status.message = "ODrive Error: " + decode_error(axis.error_code_);
+            } else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS && 
+                       axis.procedure_result_ != PROCEDURE_RESULT_BUSY) {
+                status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+                status.message = "Procedure Error: " + ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_);
+            } else if (!std::isnan(axis.motor_temperature_) && axis.motor_temperature_ > 70.0) {
+                status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+                status.message = "High Motor Temperature (" + std::to_string(axis.motor_temperature_) + " C)";
+            } else {
+                status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+                auto it = ODRIVE_AXIS_STATE_MAP.find(axis.axis_state_);
+                status.message = (it != ODRIVE_AXIS_STATE_MAP.end()) ? it->second : "OK";
+            }
+
+            auto add_kv = [&status](const std::string& key, const std::string& value) {
+                diagnostic_msgs::msg::KeyValue kv;
+                kv.key = key;
+                kv.value = value;
+                status.values.push_back(kv);
+            };
+
+            add_kv("CAN Node ID", std::to_string(axis.node_id_));
+            add_kv("Heartbeat Age (s)", std::to_string(heartbeat_age));
+            add_kv("Axis State", ODRIVE_AXIS_STATE_MAP.count(axis.axis_state_) ? ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_) : std::to_string(axis.axis_state_));
+            add_kv("Error Code", std::to_string(axis.error_code_));
+            if (axis.error_code_ != ODRIVE_ERROR_NONE) {
+                add_kv("Error Detail", decode_error(axis.error_code_));
+            }
+            add_kv("Procedure Result", ODRIVE_PROCEDURE_RESULT_MAP.count(axis.procedure_result_) ? ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_) : std::to_string(axis.procedure_result_));
+            add_kv("Bus Voltage (V)", std::isnan(axis.bus_voltage_) ? "N/A" : std::to_string(axis.bus_voltage_));
+            add_kv("Bus Current (A)", std::isnan(axis.bus_current_) ? "N/A" : std::to_string(axis.bus_current_));
+            add_kv("Motor Temperature (C)", std::isnan(axis.motor_temperature_) ? "N/A" : std::to_string(axis.motor_temperature_));
+            add_kv("Torque Target (Nm)", std::isnan(axis.torque_target_) ? "N/A" : std::to_string(axis.torque_target_));
+            add_kv("Torque Estimate (Nm)", std::isnan(axis.torque_estimate_) ? "N/A" : std::to_string(axis.torque_estimate_));
+            add_kv("Position Estimate (rad)", std::isnan(axis.pos_estimate_) ? "N/A" : std::to_string(axis.pos_estimate_));
+            add_kv("Velocity Estimate (rad/s)", std::isnan(axis.vel_estimate_) ? "N/A" : std::to_string(axis.vel_estimate_));
+        }
+
+        array_msg.status.push_back(status);
+    }
+
+    return array_msg;
 }
 
 std::string ODriveHardwareInterface::decode_error(uint32_t code) {
