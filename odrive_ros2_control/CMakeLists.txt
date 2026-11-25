@@ -56,8 +56,8 @@ install(TARGETS odrive_ros2_control_plugin
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  ament_add_gtest(test_current_limit test/test_current_limit.cpp)
-  target_include_directories(test_current_limit PRIVATE include)
+  ament_add_gtest(test_effort_limit test/test_effort_limit.cpp)
+  target_include_directories(test_effort_limit PRIVATE include)
 endif()
 
 ament_export_include_directories(

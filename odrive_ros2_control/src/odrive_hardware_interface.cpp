@@ -1,7 +1,7 @@
 
 #include "can_helpers.hpp"
 #include "can_simple_messages.hpp"
-#include "odrive_ros2_control/current_limit.hpp"
+#include "odrive_ros2_control/effort_limit.hpp"
 #include "hardware_interface/system_interface.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "odrive_enums.h"
@@ -49,13 +49,13 @@ private:
     std::string get_error_string(uint32_t error_code);
     osc_interfaces::msg::MotorsStates generate_motors_states_msg(const rclcpp::Time& timestamp);
     std::string decode_error(uint32_t code);
-    void init_current_limit(Axis& axis);
+    void init_effort_limit(Axis& axis);
     bool read_firmware_version(Axis& axis);
     std::optional<float> read_endpoint(Axis& axis, uint16_t endpoint_id);
     template <typename Done>
     bool wait_for_reply(Done done);
-    void send_current_limit(Axis& axis, double ratio);
-    void update_current_limit(Axis& axis);
+    void send_effort_limit(Axis& axis, const EffortLimitCommand& command);
+    void update_effort_limit(Axis& axis);
 
     bool active_;
     EpollEventLoop event_loop_;
@@ -109,13 +109,10 @@ struct Axis {
     double direction_multiplier_ = 1.0;
     double gear_ratio_ = 1.0;
 
-    double current_limit_ratio_ = kMaxCurrentLimitRatio;
-    bool current_limit_declared_ = false;
-    bool current_limit_enabled_ = false;
-    bool current_limit_resend_ = false;
-    float vel_limit_ = NAN;
-    float current_soft_max_ = NAN;
-    double sent_current_limit_ratio_ = NAN;
+    double effort_limit_ratio_ = kMaxEffortLimitRatio;
+    bool effort_limit_declared_ = false;
+    float configured_current_soft_max_ = NAN;
+    EffortLimiter effort_limiter_;
     std::optional<Get_Version_msg_t> version_reply_;
     std::optional<uint16_t> sdo_expected_id_;
     std::optional<float> sdo_reply_;
@@ -245,8 +242,8 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
 
         auto& axis = axes_.back();
         for (const auto& command_interface : joint.command_interfaces) {
-            if (command_interface.name == kCurrentLimitInterfaceName) {
-                axis.current_limit_declared_ = true;
+            if (command_interface.name == kEffortLimitInterfaceName) {
+                axis.effort_limit_declared_ = true;
             }
         }
         auto rotation_param_it = joint.parameters.find("inverse_rotation");
@@ -302,17 +299,24 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
         axis.heartbeat_timeout_s_ = heartbeat_timeout_s_;
     }
 
-    const bool any_current_limit = std::any_of(axes_.begin(), axes_.end(), [](const Axis& axis) {
-        return axis.current_limit_declared_;
+    const bool any_effort_limit = std::any_of(axes_.begin(), axes_.end(), [](const Axis& axis) {
+        return axis.effort_limit_declared_;
     });
-    if (any_current_limit) {
+    if (any_effort_limit) {
         try {
+            const float current_soft_max = std::stof(info_.hardware_parameters.at("current_soft_max"));
+            if (!std::isfinite(current_soft_max) || current_soft_max <= 0.0f) {
+                throw std::invalid_argument("current_soft_max must be positive and finite");
+            }
+            for (auto& axis : axes_) {
+                axis.configured_current_soft_max_ = current_soft_max;
+            }
             current_limit_read_retries_ = std::stoul(info_.hardware_parameters.at("current_limit_read_retries"));
             current_limit_read_retry_delay_s_ = std::stod(info_.hardware_parameters.at("current_limit_read_retry_delay_s"));
         } catch (const std::exception& e) {
             RCLCPP_ERROR(
                 rclcpp::get_logger("ODriveHardwareInterface"),
-                "Invalid or missing 'current_limit_read_retries' or 'current_limit_read_retry_delay_s': %s",
+                "Invalid or missing 'current_soft_max', 'current_limit_read_retries' or 'current_limit_read_retry_delay_s': %s",
                 e.what()
             );
             return CallbackReturn::ERROR;
@@ -348,11 +352,9 @@ CallbackReturn ODriveHardwareInterface::on_activate(const State&) {
     active_ = true;
     timestamp_ = clock_.now();
     for (auto& axis : axes_) {
-        axis.current_limit_enabled_ = false;
-        axis.current_limit_resend_ = false;
-        axis.sent_current_limit_ratio_ = NAN;
-        if (axis.current_limit_declared_) {
-            init_current_limit(axis);
+        axis.effort_limiter_.deactivate();
+        if (axis.effort_limit_declared_) {
+            init_effort_limit(axis);
         }
     }
     for (auto& axis : axes_) {
@@ -367,9 +369,10 @@ CallbackReturn ODriveHardwareInterface::on_deactivate(const State&) {
 
     active_ = false;
     for (auto& axis : axes_) {
-        if (axis.current_limit_enabled_) {
-            send_current_limit(axis, kMaxCurrentLimitRatio);
+        if (const auto release = axis.effort_limiter_.release()) {
+            send_effort_limit(axis, *release);
         }
+        axis.effort_limiter_.deactivate();
         set_axis_command_mode(axis);
     }
 
@@ -419,11 +422,11 @@ std::vector<hardware_interface::CommandInterface> ODriveHardwareInterface::expor
             hardware_interface::HW_IF_POSITION,
             &axes_[i].pos_setpoint_
         ));
-        if (axes_[i].current_limit_declared_) {
+        if (axes_[i].effort_limit_declared_) {
             command_interfaces.emplace_back(hardware_interface::CommandInterface(
                 info_.joints[i].name,
-                kCurrentLimitInterfaceName,
-                &axes_[i].current_limit_ratio_
+                kEffortLimitInterfaceName,
+                &axes_[i].effort_limit_ratio_
             ));
         }
     }
@@ -486,9 +489,7 @@ return_type ODriveHardwareInterface::read(const rclcpp::Time& timestamp, const r
 
 return_type ODriveHardwareInterface::write(const rclcpp::Time&, const rclcpp::Duration&) {
     for (auto& axis : axes_) {
-        if (axis.current_limit_enabled_) {
-            update_current_limit(axis);
-        }
+        update_effort_limit(axis);
         // Send the CAN message that fits the set of enabled setpoints
         if (axis.pos_input_enabled_) {
             Set_Input_Pos_msg_t msg;
@@ -637,62 +638,54 @@ std::optional<float> ODriveHardwareInterface::read_endpoint(Axis& axis, uint16_t
     return std::nullopt;
 }
 
-void ODriveHardwareInterface::init_current_limit(Axis& axis) {
+void ODriveHardwareInterface::init_effort_limit(Axis& axis) {
     if (!read_firmware_version(axis)) {
         RCLCPP_ERROR(
             rclcpp::get_logger("ODriveHardwareInterface"),
-            "Current limit disabled for node %u, activation continues.",
+            "Effort limit disabled for node %u, activation continues.",
             axis.node_id_
         );
         return;
     }
     const auto vel_limit = read_endpoint(axis, kVelLimitEndpointId);
-    const auto current_soft_max = vel_limit ? read_endpoint(axis, kCurrentSoftMaxEndpointId) : std::nullopt;
-    if (!vel_limit || !current_soft_max || !std::isfinite(*vel_limit) || !std::isfinite(*current_soft_max)
-        || *vel_limit <= 0.0f || *current_soft_max <= 0.0f) {
+    if (!vel_limit || !std::isfinite(*vel_limit) || *vel_limit <= 0.0f) {
         RCLCPP_ERROR(
             rclcpp::get_logger("ODriveHardwareInterface"),
-            "Current limit disabled for node %u: vel_limit and current_soft_max could not be read, activation continues.",
+            "Effort limit disabled for node %u: vel_limit could not be read, activation continues.",
             axis.node_id_
         );
         return;
     }
-    axis.vel_limit_ = *vel_limit;
-    axis.current_soft_max_ = *current_soft_max;
-    axis.current_limit_enabled_ = true;
+    axis.effort_limiter_.activate(*vel_limit, axis.configured_current_soft_max_);
     RCLCPP_INFO(
         rclcpp::get_logger("ODriveHardwareInterface"),
-        "Node %u current limit enabled: vel_limit=%f, current_soft_max=%f.",
+        "Node %u effort limit enabled: vel_limit=%f, configured current_soft_max=%f.",
         axis.node_id_,
-        axis.vel_limit_,
-        axis.current_soft_max_
+        *vel_limit,
+        axis.configured_current_soft_max_
     );
 }
 
-void ODriveHardwareInterface::send_current_limit(Axis& axis, double ratio) {
+void ODriveHardwareInterface::send_effort_limit(Axis& axis, const EffortLimitCommand& command) {
     Set_Limits_msg_t msg;
-    msg.Velocity_Limit = axis.vel_limit_;
-    msg.Current_Limit = compute_current_limit(ratio, axis.current_soft_max_);
+    msg.Velocity_Limit = command.velocity_limit;
+    msg.Current_Limit = command.current_limit;
     axis.send(msg);
-    axis.sent_current_limit_ratio_ = ratio;
-    axis.current_limit_resend_ = false;
 }
 
-void ODriveHardwareInterface::update_current_limit(Axis& axis) {
-    const auto ratio = sanitize_current_limit_ratio(axis.current_limit_ratio_);
-    if (!ratio) {
+void ODriveHardwareInterface::update_effort_limit(Axis& axis) {
+    const auto command = axis.effort_limiter_.next(axis.effort_limit_ratio_);
+    if (!command) {
         return;
     }
-    const bool changed = *ratio != axis.sent_current_limit_ratio_;
-    if (!changed && !axis.current_limit_resend_) {
-        return;
-    }
-    send_current_limit(axis, *ratio);
+    send_effort_limit(axis, *command);
     RCLCPP_INFO(
         rclcpp::get_logger("ODriveHardwareInterface"),
-        changed ? "Node %u current limit ratio set to %f." : "Node %u current limit ratio %f re-sent after heartbeat loss.",
+        command->changed ? "Node %u effort limit ratio set to %f (current limit %f A)."
+                         : "Node %u effort limit ratio %f re-sent after heartbeat loss (current limit %f A).",
         axis.node_id_,
-        *ratio
+        command->ratio,
+        command->current_limit
     );
 }
 
@@ -846,7 +839,7 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
             if (Heartbeat_msg_t msg; try_decode(msg)) {
                 if (timestamp_heartbeat_.nanoseconds() != 0
                     && timestamp.seconds() - timestamp_heartbeat_.seconds() > heartbeat_timeout_s_) {
-                    current_limit_resend_ = true;
+                    effort_limiter_.request_resend();
                 }
                 timestamp_heartbeat_ = timestamp;
                 procedure_result_ = msg.Procedure_Result;
