@@ -641,35 +641,35 @@ diagnostic_msgs::msg::DiagnosticArray ODriveHardwareInterface::generate_diagnost
                 status.values.push_back(kv);
             };
 
-            add_kv("CAN Node ID", std::to_string(axis.node_id_));
-            add_kv("Heartbeat Age (s)", std::to_string(heartbeat_age));
+            add_kv("can_node_id", std::to_string(axis.node_id_));
+            add_kv("heartbeat_age_s", std::to_string(heartbeat_age));
             add_kv(
-                "Axis State",
+                "axis_state",
                 ODRIVE_AXIS_STATE_MAP.count(axis.axis_state_) ? ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_)
                                                               : std::to_string(axis.axis_state_)
             );
-            add_kv("Error Code", std::to_string(axis.error_code_));
+            add_kv("error_code", std::to_string(axis.error_code_));
             if (axis.error_code_ != ODRIVE_ERROR_NONE) {
-                add_kv("Error Detail", decode_error(axis.error_code_));
+                add_kv("error_detail", decode_error(axis.error_code_));
             }
-            add_kv("Procedure Result", proc_str);
-            add_kv("Bus Voltage (V)", std::isnan(axis.bus_voltage_) ? "N/A" : std::to_string(axis.bus_voltage_));
-            add_kv("Bus Current (A)", std::isnan(axis.bus_current_) ? "N/A" : std::to_string(axis.bus_current_));
+            add_kv("procedure_result", proc_str);
+            add_kv("bus_voltage_v", std::isnan(axis.bus_voltage_) ? "N/A" : std::to_string(axis.bus_voltage_));
+            add_kv("bus_current_a", std::isnan(axis.bus_current_) ? "N/A" : std::to_string(axis.bus_current_));
             add_kv(
-                "Motor Temperature (C)",
+                "motor_temperature_c",
                 std::isnan(axis.motor_temperature_) ? "N/A" : std::to_string(axis.motor_temperature_)
             );
-            add_kv("Torque Target (Nm)", std::isnan(axis.torque_target_) ? "N/A" : std::to_string(axis.torque_target_));
+            add_kv("torque_target_nm", std::isnan(axis.torque_target_) ? "N/A" : std::to_string(axis.torque_target_));
             add_kv(
-                "Torque Estimate (Nm)",
+                "torque_estimate_nm",
                 std::isnan(axis.torque_estimate_) ? "N/A" : std::to_string(axis.torque_estimate_)
             );
             add_kv(
-                "Position Estimate (rad)",
+                "position_estimate_rad",
                 std::isnan(axis.pos_estimate_) ? "N/A" : std::to_string(axis.pos_estimate_)
             );
             add_kv(
-                "Velocity Estimate (rad/s)",
+                "velocity_estimate_rad_s",
                 std::isnan(axis.vel_estimate_) ? "N/A" : std::to_string(axis.vel_estimate_)
             );
         }
