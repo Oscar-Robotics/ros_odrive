@@ -10,11 +10,12 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(ament_cmake_auto REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(osc_utils REQUIRED)
 find_package(osc_interfaces REQUIRED)
 ament_auto_find_build_dependencies()
 
-ament_export_dependencies(rosidl_default_runtime std_msgs osc_utils)
+ament_export_dependencies(rosidl_default_runtime std_msgs diagnostic_msgs osc_utils)
 
 
 include_directories(include)
@@ -34,6 +35,7 @@ ament_auto_add_library(
 ament_target_dependencies(odrive_ros2_control_plugin
   rclcpp
   std_msgs
+  diagnostic_msgs
   osc_utils
 )
 
