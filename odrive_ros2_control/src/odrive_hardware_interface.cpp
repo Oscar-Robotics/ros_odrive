@@ -62,11 +62,14 @@ private:
     bool enable_diagnostics_pub_ = true;
     double pub_period_s_;
     double heartbeat_timeout_s_;
+    double motor_temp_warning_threshold_c_ = 50.0;
 };
 
 struct Axis {
     Axis(SocketCanIntf* can_intf, uint32_t node_id, const std::string& joint_name = "")
-        : can_intf_(can_intf), node_id_(node_id), joint_name_(joint_name) {}
+        : can_intf_(can_intf),
+          node_id_(node_id),
+          joint_name_(joint_name) {}
 
     void on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame);
 
@@ -264,12 +267,22 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
     };
 
     if ((enable_motors_states_pub_ = get_bool_param("enable_motors_states_pub"))) {
-        pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorsStates>>("odrive_hw", info_.hardware_parameters.at("motor_state_topic"));
+        pub_ = std::make_shared<SimplePublisher<osc_interfaces::msg::MotorsStates>>(
+            "odrive_hw",
+            info_.hardware_parameters.at("motor_state_topic")
+        );
     }
     if ((enable_diagnostics_pub_ = get_bool_param("enable_diagnostics_pub"))) {
-        diag_pub_ = std::make_shared<SimplePublisher<diagnostic_msgs::msg::DiagnosticArray>>("odrive_diagnostics", "/diagnostics");
+        diag_pub_ = std::make_shared<SimplePublisher<diagnostic_msgs::msg::DiagnosticArray>>(
+            "odrive_diagnostics",
+            "/diagnostics"
+        );
     }
     heartbeat_timeout_s_ = std::stod(info.hardware_parameters.at("heartbeat_timeout_period_s"));
+    auto temp_param_it = info_.hardware_parameters.find("motor_temp_warning_threshold_c");
+    if (temp_param_it != info_.hardware_parameters.end()) {
+        motor_temp_warning_threshold_c_ = std::stod(temp_param_it->second);
+    }
     timestamp_pub_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
     return CallbackReturn::SUCCESS;
 }
@@ -537,10 +550,9 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             motor_msg.command_setpoint = 0.0;
             motor_msg.command_actual = 0.0;
             motor_msg.status_detail = decode_error(axis.error_code_);
-        } 
+        }
 
-        else if (axis.procedure_result_ == PROCEDURE_RESULT_BUSY && 
-                axis.axis_state_ == AXIS_STATE_CLOSED_LOOP_CONTROL) {
+        else if (axis.procedure_result_ == PROCEDURE_RESULT_BUSY && axis.axis_state_ == AXIS_STATE_CLOSED_LOOP_CONTROL) {
             // Axis is running in closed loop control
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_RUNNING;
             motor_msg.status_detail = ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_);
@@ -559,8 +571,7 @@ osc_interfaces::msg::MotorsStates ODriveHardwareInterface::generate_motors_state
             }
         }
 
-        else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS &&
-                axis.procedure_result_ != PROCEDURE_RESULT_BUSY) {
+        else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS && axis.procedure_result_ != PROCEDURE_RESULT_BUSY) {
             // Procedure result indicates an error
             motor_msg.motor_status = osc_interfaces::msg::DeviceStatus::STATUS_ERROR;
             motor_msg.motor_control_mode = osc_interfaces::msg::MotorState::CONTROL_MODE_IDLE;
@@ -587,9 +598,8 @@ diagnostic_msgs::msg::DiagnosticArray ODriveHardwareInterface::generate_diagnost
 
     for (auto& axis : axes_) {
         diagnostic_msgs::msg::DiagnosticStatus status;
-        std::string component_name = axis.joint_name_.empty() 
-            ? ("ODrive Axis " + std::to_string(axis.node_id_)) 
-            : axis.joint_name_;
+        std::string component_name = axis.joint_name_.empty() ? ("ODrive Axis " + std::to_string(axis.node_id_))
+                                                              : axis.joint_name_;
         status.name = component_name;
         status.hardware_id = "odrive_can_node_" + std::to_string(axis.node_id_);
 
@@ -598,17 +608,24 @@ diagnostic_msgs::msg::DiagnosticArray ODriveHardwareInterface::generate_diagnost
             status.message = "Unreachable (No heartbeat received)";
         } else {
             double heartbeat_age = timestamp.seconds() - axis.timestamp_heartbeat_.seconds();
+            std::string proc_str;
+            auto proc_it = ODRIVE_PROCEDURE_RESULT_MAP.find(axis.procedure_result_);
+            if (proc_it != ODRIVE_PROCEDURE_RESULT_MAP.end()) {
+                proc_str = proc_it->second;
+            } else {
+                proc_str = "Unknown (" + std::to_string(axis.procedure_result_) + ")";
+            }
+
             if (heartbeat_age > heartbeat_timeout_s_) {
                 status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
                 status.message = "Communication timeout (" + std::to_string(heartbeat_age) + "s since last heartbeat)";
             } else if (axis.error_code_ != ODRIVE_ERROR_NONE) {
                 status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
                 status.message = "ODrive Error: " + decode_error(axis.error_code_);
-            } else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS && 
-                       axis.procedure_result_ != PROCEDURE_RESULT_BUSY) {
+            } else if (axis.procedure_result_ != PROCEDURE_RESULT_SUCCESS && axis.procedure_result_ != PROCEDURE_RESULT_BUSY) {
                 status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
-                status.message = "Procedure Error: " + ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_);
-            } else if (!std::isnan(axis.motor_temperature_) && axis.motor_temperature_ > 70.0) {
+                status.message = "Procedure Error: " + proc_str;
+            } else if (!std::isnan(axis.motor_temperature_) && axis.motor_temperature_ > motor_temp_warning_threshold_c_) {
                 status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
                 status.message = "High Motor Temperature (" + std::to_string(axis.motor_temperature_) + " C)";
             } else {
@@ -626,19 +643,35 @@ diagnostic_msgs::msg::DiagnosticArray ODriveHardwareInterface::generate_diagnost
 
             add_kv("CAN Node ID", std::to_string(axis.node_id_));
             add_kv("Heartbeat Age (s)", std::to_string(heartbeat_age));
-            add_kv("Axis State", ODRIVE_AXIS_STATE_MAP.count(axis.axis_state_) ? ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_) : std::to_string(axis.axis_state_));
+            add_kv(
+                "Axis State",
+                ODRIVE_AXIS_STATE_MAP.count(axis.axis_state_) ? ODRIVE_AXIS_STATE_MAP.at(axis.axis_state_)
+                                                              : std::to_string(axis.axis_state_)
+            );
             add_kv("Error Code", std::to_string(axis.error_code_));
             if (axis.error_code_ != ODRIVE_ERROR_NONE) {
                 add_kv("Error Detail", decode_error(axis.error_code_));
             }
-            add_kv("Procedure Result", ODRIVE_PROCEDURE_RESULT_MAP.count(axis.procedure_result_) ? ODRIVE_PROCEDURE_RESULT_MAP.at(axis.procedure_result_) : std::to_string(axis.procedure_result_));
+            add_kv("Procedure Result", proc_str);
             add_kv("Bus Voltage (V)", std::isnan(axis.bus_voltage_) ? "N/A" : std::to_string(axis.bus_voltage_));
             add_kv("Bus Current (A)", std::isnan(axis.bus_current_) ? "N/A" : std::to_string(axis.bus_current_));
-            add_kv("Motor Temperature (C)", std::isnan(axis.motor_temperature_) ? "N/A" : std::to_string(axis.motor_temperature_));
+            add_kv(
+                "Motor Temperature (C)",
+                std::isnan(axis.motor_temperature_) ? "N/A" : std::to_string(axis.motor_temperature_)
+            );
             add_kv("Torque Target (Nm)", std::isnan(axis.torque_target_) ? "N/A" : std::to_string(axis.torque_target_));
-            add_kv("Torque Estimate (Nm)", std::isnan(axis.torque_estimate_) ? "N/A" : std::to_string(axis.torque_estimate_));
-            add_kv("Position Estimate (rad)", std::isnan(axis.pos_estimate_) ? "N/A" : std::to_string(axis.pos_estimate_));
-            add_kv("Velocity Estimate (rad/s)", std::isnan(axis.vel_estimate_) ? "N/A" : std::to_string(axis.vel_estimate_));
+            add_kv(
+                "Torque Estimate (Nm)",
+                std::isnan(axis.torque_estimate_) ? "N/A" : std::to_string(axis.torque_estimate_)
+            );
+            add_kv(
+                "Position Estimate (rad)",
+                std::isnan(axis.pos_estimate_) ? "N/A" : std::to_string(axis.pos_estimate_)
+            );
+            add_kv(
+                "Velocity Estimate (rad/s)",
+                std::isnan(axis.vel_estimate_) ? "N/A" : std::to_string(axis.vel_estimate_)
+            );
         }
 
         array_msg.status.push_back(status);
@@ -684,7 +717,7 @@ void Axis::on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame) {
         } break;
         case Get_Torques_msg_t::cmd_id: {
             if (Get_Torques_msg_t msg; try_decode(msg)) {
-                torque_target_ = (msg.Torque_Target * direction_multiplier_) / gear_ratio_ ;
+                torque_target_ = (msg.Torque_Target * direction_multiplier_) / gear_ratio_;
                 torque_estimate_ = (msg.Torque_Estimate * direction_multiplier_) / gear_ratio_;
             }
         } break;
